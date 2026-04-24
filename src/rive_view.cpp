@@ -1,37 +1,32 @@
 #include "rive_view.h"
-#include "rive_painter_renderer.h"
+#include "rive_metal_renderer.h"
 
-#include <QByteArray>
 #include <QFile>
 #include <QLoggingCategory>
 #include <QQuickWindow>
+#include <QSGSimpleTextureNode>
 
-#include <rive/animation/state_machine_instance.hpp>
-#include <rive/artboard.hpp>
-#include <rive/file.hpp>
-#include <rive/layout.hpp>
-#include <rive/math/aabb.hpp>
-
-// Category name chosen so consumers can enable with QT_LOGGING_RULES="rive.*=true".
 Q_LOGGING_CATEGORY(lcRiveView, "rive.view")
 
 namespace {
 
-rive::Fit toRiveFit(RiveView::Fit f)
+// Fit enum is duplicated between RiveView and RiveMetalRenderer to
+// keep the renderer header free of QObject machinery.
+RiveMetalRenderer::FitMode toRendererFit(RiveView::Fit f)
 {
     switch (f)
     {
-    case RiveView::Fit::Contain:   return rive::Fit::contain;
-    case RiveView::Fit::Cover:     return rive::Fit::cover;
-    case RiveView::Fit::Fill:      return rive::Fit::fill;
-    case RiveView::Fit::None:      return rive::Fit::none;
-    case RiveView::Fit::ScaleDown: return rive::Fit::scaleDown;
+    case RiveView::Fit::Contain:   return RiveMetalRenderer::FitMode::Contain;
+    case RiveView::Fit::Cover:     return RiveMetalRenderer::FitMode::Cover;
+    case RiveView::Fit::Fill:      return RiveMetalRenderer::FitMode::Fill;
+    case RiveView::Fit::None:      return RiveMetalRenderer::FitMode::None;
+    case RiveView::Fit::ScaleDown: return RiveMetalRenderer::FitMode::ScaleDown;
     }
-    return rive::Fit::contain;
+    return RiveMetalRenderer::FitMode::Contain;
 }
 
-// Read the .riv bytes. Supports qrc:// paths (embedded resources) and
-// file:// paths. Anything else is rejected.
+// Both qrc:// and file:// .riv files are supported. Anything else is
+// rejected — a network fetch would need an async path.
 QByteArray readRiveBytes(const QUrl& url, QString* error)
 {
     QString path;
@@ -40,7 +35,7 @@ QByteArray readRiveBytes(const QUrl& url, QString* error)
     else if (url.isLocalFile())
         path = url.toLocalFile();
     else if (url.scheme().isEmpty() && url.path().startsWith(QLatin1Char(':')))
-        path = url.path(); // Raw ":/..." qrc form.
+        path = url.path();
     else
     {
         *error = QStringLiteral("Unsupported URL scheme: %1").arg(url.scheme());
@@ -58,15 +53,10 @@ QByteArray readRiveBytes(const QUrl& url, QString* error)
 
 } // namespace
 
-RiveView::RiveView(QQuickItem* parent) : QQuickPaintedItem(parent)
+RiveView::RiveView(QQuickItem* parent)
+    : QQuickItem(parent), m_renderer(std::make_unique<RiveMetalRenderer>())
 {
-    // Antialiased output. QQuickPaintedItem renders into a texture owned by
-    // the scene graph, so we don't set renderTarget here — the default
-    // (FramebufferObject) works on all Qt 6 backends.
-    setAntialiasing(true);
     setFlag(ItemHasContents, true);
-
-    // Kick off the first advance as soon as we're shown.
     m_frameTimer.start();
 }
 
@@ -78,7 +68,8 @@ void RiveView::setSource(const QUrl& url)
         return;
     m_source = url;
     emit sourceChanged();
-    reload();
+    readSourceBytes();
+    update();
 }
 
 void RiveView::setFit(Fit f)
@@ -97,154 +88,178 @@ void RiveView::setPlaying(bool playing)
     m_playing = playing;
     if (m_playing)
     {
-        resetAnimationClock();
+        m_frameTimer.restart();
+        m_lastAdvanceNs = 0;
         m_settled = false;
-        update(); // kick a repaint so advanceFrame runs again
+        update();
     }
     emit playingChanged();
 }
 
-void RiveView::reload()
+void RiveView::readSourceBytes()
 {
-    m_stateMachine.reset();
-    m_artboard.reset();
-    m_file.reset();
+    m_pendingBytes.clear();
+    m_loadPending = false;
     m_settled = false;
 
     if (m_source.isEmpty())
-    {
-        update();
         return;
-    }
 
     QString error;
-    const QByteArray bytes = readRiveBytes(m_source, &error);
+    QByteArray bytes = readRiveBytes(m_source, &error);
     if (bytes.isEmpty())
     {
         qCWarning(lcRiveView) << "Failed to read source:" << error;
         emit loadFailed(error);
-        update();
         return;
     }
-
-    rive::ImportResult result = rive::ImportResult::malformed;
-    auto file = rive::File::import(
-        rive::Span<const uint8_t>(reinterpret_cast<const uint8_t*>(bytes.constData()),
-                                  static_cast<size_t>(bytes.size())),
-        &m_factory,
-        &result);
-
-    if (result != rive::ImportResult::success || !file)
-    {
-        const QString reason = result == rive::ImportResult::unsupportedVersion
-                                   ? QStringLiteral("Unsupported .riv version")
-                                   : QStringLiteral("Malformed .riv file");
-        qCWarning(lcRiveView) << "Import failed:" << reason;
-        emit loadFailed(reason);
-        update();
-        return;
-    }
-
-    // rive::File is ref-counted via rcp<>; we're the sole consumer here so
-    // we release the rcp into a unique_ptr-shaped member for clearer
-    // ownership semantics.
-    rive::File* rawFile = file.release();
-    m_file.reset(rawFile);
-
-    m_artboard = m_file->artboardDefault();
-    if (!m_artboard)
-    {
-        emit loadFailed(QStringLiteral("No default artboard in .riv file"));
-        update();
-        return;
-    }
-
-    m_stateMachine = m_artboard->defaultStateMachine();
-    // .riv files don't have to have a state machine — animating still works
-    // via the artboard alone (it will advance its animations on its own).
-
-    resetAnimationClock();
-    update();
-}
-
-void RiveView::resetAnimationClock()
-{
+    m_pendingBytes = std::move(bytes);
+    m_loadPending = true;
     m_frameTimer.restart();
     m_lastAdvanceNs = 0;
 }
 
 void RiveView::itemChange(ItemChange change, const ItemChangeData& data)
 {
-    QQuickPaintedItem::itemChange(change, data);
-    if (change == ItemSceneChange && data.window)
+    QQuickItem::itemChange(change, data);
+    if (change == ItemSceneChange)
     {
-        // Drive the advance loop off the scene graph's frame clock. Vsync-
-        // aligned updates without a QTimer fighting the render thread.
-        // DirectConnection so advance runs on the render thread's sync phase
-        // — rive's scene-graph mutations need to land before paint().
-        connect(data.window, &QQuickWindow::beforeSynchronizing,
-                this, &RiveView::advanceFrame, Qt::DirectConnection);
+        if (data.window)
+        {
+            // Drive advance off the scene graph's frame clock so the
+            // animation steps in lockstep with vsync. Direct connection
+            // — onBeforeSynchronizing runs on the render thread before
+            // updatePaintNode is invoked.
+            connect(data.window, &QQuickWindow::beforeSynchronizing, this,
+                    &RiveView::onBeforeSynchronizing, Qt::DirectConnection);
+            connect(data.window, &QQuickWindow::sceneGraphInvalidated, this,
+                    &RiveView::onSceneGraphInvalidated, Qt::DirectConnection);
+        }
+        else
+        {
+            // Item removed from the window. The QSG-side resources will
+            // be torn down via sceneGraphInvalidated; nothing to do here.
+        }
     }
 }
 
-void RiveView::advanceFrame()
+void RiveView::onBeforeSynchronizing()
 {
-    if (!m_playing || !m_artboard)
+    if (!m_playing || m_settled)
         return;
-
-    // Short-circuit when the animation has settled (no state-machine
-    // transitions pending, no active animations). Without this the view
-    // burns CPU drawing the same frame every vsync — was the "20% idle"
-    // behaviour in the spike. The next user interaction / setSource /
-    // setPlaying will flip m_settled back to false.
-    if (m_settled)
-        return;
-
-    const qint64 nowNs = m_frameTimer.nsecsElapsed();
-    const qint64 deltaNs = nowNs - m_lastAdvanceNs;
-    m_lastAdvanceNs = nowNs;
-    const float deltaSec = static_cast<float>(deltaNs) * 1e-9f;
-
-    // Clamp absurd deltas (e.g. after a stall) so one missed frame doesn't
-    // fast-forward the animation by seconds.
-    const float clamped = std::min(deltaSec, 0.25f);
-
-    // Rive's advance* returns false when nothing further needs to animate
-    // — either the state machine hit a stable state or the artboard's
-    // animations all finished. That's our cue to stop calling update().
-    bool needsMore = true;
-    if (m_stateMachine)
-        needsMore = m_stateMachine->advanceAndApply(clamped);
-    else
-        needsMore = m_artboard->advance(clamped);
-
-    if (!needsMore)
-        m_settled = true;
-
-    // advance* mutates the rive scene graph but doesn't schedule a repaint
-    // — we have to request one explicitly.
+    // Just request a polish/update — actual advance happens in
+    // updatePaintNode where we have access to the renderer.
     update();
 }
 
-void RiveView::paint(QPainter* painter)
+void RiveView::onSceneGraphInvalidated()
 {
-    if (!m_artboard)
-        return;
+    // Renderer holds QRhi-bound resources that go invalid here. Drop
+    // and rebuild on next updatePaintNode.
+    m_renderer = std::make_unique<RiveMetalRenderer>();
+    m_rendererInitialized = false;
+    m_loadPending = !m_pendingBytes.isEmpty();
+    m_settled = false;
+}
 
-    painter->setRenderHint(QPainter::Antialiasing, true);
-    painter->setRenderHint(QPainter::SmoothPixmapTransform, true);
+QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
+{
+    auto* node = static_cast<QSGSimpleTextureNode*>(oldNode);
+    const QSizeF itemSize(width(), height());
+    const QQuickWindow* win = window();
 
-    RivePainterRenderer renderer(painter);
-    renderer.save();
+    if (!win || itemSize.isEmpty())
+    {
+        delete node;
+        return nullptr;
+    }
 
-    // Map the artboard's logical coordinate space into the item's pixel
-    // rect using rive's built-in alignment helper.
-    const rive::AABB frame(0.0f, 0.0f, static_cast<float>(width()),
-                           static_cast<float>(height()));
-    renderer.align(toRiveFit(m_fit), rive::Alignment::center, frame,
-                   m_artboard->bounds());
+    if (!m_rendererInitialized)
+    {
+        QString error;
+        if (!m_renderer->initialize(window(), &error))
+        {
+            // RHI mismatch / no Metal device. Surface to QML once, then
+            // stop trying — repeated emissions on every frame would be
+            // a footgun. The plugin's docs call out the requirement.
+            qCWarning(lcRiveView) << "RiveMetalRenderer init failed:" << error;
+            // Still return null so the scene graph composites nothing.
+            // Caller can react to loadFailed if they want a placeholder.
+            static thread_local bool warnedOnce = false;
+            if (!warnedOnce)
+            {
+                warnedOnce = true;
+                emit loadFailed(error);
+            }
+            delete node;
+            return nullptr;
+        }
+        m_rendererInitialized = true;
+    }
 
-    m_artboard->draw(&renderer);
+    if (m_loadPending)
+    {
+        m_loadPending = false;
+        QString error;
+        if (!m_renderer->loadFile(m_pendingBytes, &error))
+        {
+            qCWarning(lcRiveView) << "Failed to load .riv:" << error;
+            emit loadFailed(error);
+            delete node;
+            return nullptr;
+        }
+    }
 
-    renderer.restore();
+    if (!m_renderer->hasArtboard())
+    {
+        delete node;
+        return nullptr;
+    }
+
+    // Advance the artboard for this frame. The first updatePaintNode
+    // after a load won't have a "previous" timestamp — fall through
+    // with delta = 0 to lay down the initial frame.
+    if (m_playing && !m_settled)
+    {
+        const qint64 nowNs = m_frameTimer.nsecsElapsed();
+        const qint64 deltaNs = nowNs - m_lastAdvanceNs;
+        m_lastAdvanceNs = nowNs;
+        const float delta = std::min(static_cast<float>(deltaNs) * 1e-9f, 0.25f);
+        const bool needsMore = m_renderer->advance(delta);
+        if (!needsMore)
+            m_settled = true;
+    }
+
+    const qreal dpr = win->effectiveDevicePixelRatio();
+    const QSize pixelSize(static_cast<int>(std::ceil(itemSize.width() * dpr)),
+                          static_cast<int>(std::ceil(itemSize.height() * dpr)));
+
+    QSGTexture* tex = m_renderer->ensureTexture(pixelSize);
+    if (!tex)
+    {
+        delete node;
+        return nullptr;
+    }
+
+    if (!node)
+    {
+        node = new QSGSimpleTextureNode();
+        node->setOwnsTexture(false);
+        // Linear filtering for crisp upscale and clean downscale —
+        // PLS already AAs internally so we don't need MSAA on top.
+        node->setFiltering(QSGTexture::Linear);
+    }
+
+    if (node->texture() != tex)
+        node->setTexture(tex);
+    node->setRect(QRectF(0, 0, itemSize.width(), itemSize.height()));
+
+    m_renderer->renderFrame(toRendererFit(m_fit));
+
+    // Schedule the next frame if still animating — beforeSynchronizing
+    // alone won't fire if no item requests an update.
+    if (m_playing && !m_settled)
+        update();
+
+    return node;
 }

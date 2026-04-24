@@ -3,39 +3,40 @@
 
 // RiveView — QML-facing item that plays a .riv file.
 //
-// Owns a rive::File / ArtboardInstance / StateMachineInstance and drives
-// them off the scene graph's frame clock. Paints via a QPainter-backed
-// rive::Renderer (see rive_painter_renderer.h) — CPU rasterization into
-// the QQuickPaintedItem's backing texture.
+// Rendering: zero-copy GPU. We pull Qt's Metal device + command queue
+// out of the scene-graph RHI, drive rive's PLS Metal renderer with the
+// same device, and surface the rive output as a QSGTexture that the
+// scene graph composites without copying. See rive_metal_renderer.h
+// for the Metal interop details.
+//
+// Threading: setSource()/setFit()/setPlaying() are called on the GUI
+// thread. updatePaintNode() runs on the render thread during the sync
+// phase (GUI thread blocked) — that's where rive's per-frame work
+// happens, including .riv decoding (deferred from setSource).
 //
 // Known limitations:
-//   - No pointer-event forwarding to state-machine inputs (TODO).
-//   - No QML API for reading/writing state-machine inputs or view-model
-//     properties (TODO).
-//   - CPU rasterization only. A future implementation should render Rive
-//     on Metal/D3D/Vulkan directly into a QSGTexture for zero-copy
-//     compositing with the rest of the scene graph.
-//   - drawImageMesh is stubbed; .riv files using skinned / warped
-//     images will have those regions render blank.
+//   - Pointer events aren't forwarded to state-machine inputs (TODO).
+//   - No QML API for state-machine inputs / view-model props (TODO).
+//   - .riv files containing embedded PNG/JPEG images won't render
+//     those pixels — rive_decoders is disabled in this build to keep
+//     the dependency surface small. Animations without raster art
+//     work fine.
+//   - macOS only for now. Other RHIs (D3D, Vulkan) need analogous
+//     RenderContext*Impl wiring.
 
-#include "rive_painter_factory.h"
-
+#include <QByteArray>
 #include <QElapsedTimer>
-#include <QQuickPaintedItem>
+#include <QQuickItem>
 #include <QString>
 #include <QUrl>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <memory>
 
-namespace rive {
-class Artboard;
-class ArtboardInstance;
-class File;
-class StateMachineInstance;
-}
+class RiveMetalRenderer;
+class QSGNode;
 
-class RiveView : public QQuickPaintedItem
+class RiveView : public QQuickItem
 {
     Q_OBJECT
     QML_ELEMENT
@@ -52,11 +53,11 @@ class RiveView : public QQuickPaintedItem
 public:
     enum class Fit
     {
-        Contain,  // rive::Fit::contain
-        Cover,    // rive::Fit::cover
-        Fill,     // rive::Fit::fill
-        None,     // rive::Fit::none
-        ScaleDown // rive::Fit::scaleDown
+        Contain,
+        Cover,
+        Fill,
+        None,
+        ScaleDown
     };
     Q_ENUM(Fit)
 
@@ -72,8 +73,8 @@ public:
     bool isPlaying() const { return m_playing; }
     void setPlaying(bool playing);
 
-    // QQuickPaintedItem
-    void paint(QPainter* painter) override;
+    // QQuickItem
+    QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
 
 signals:
     void sourceChanged();
@@ -87,34 +88,36 @@ protected:
     void itemChange(ItemChange change, const ItemChangeData& data) override;
 
 private slots:
-    void advanceFrame();
+    void onBeforeSynchronizing();
+    void onSceneGraphInvalidated();
 
 private:
-    void reload();
-    void resetAnimationClock();
-
-    RivePainterFactory m_factory;
+    void readSourceBytes();
 
     QUrl m_source;
     Fit m_fit = Fit::Contain;
     bool m_playing = true;
 
-    // True once rive's advance* reports "nothing more to animate" — state
-    // machine has no pending transitions and no animations are active.
-    // Gates out the per-vsync advance/repaint loop so a static final frame
-    // doesn't burn CPU redrawing itself. Reset on source/playing changes.
+    // Bytes read on the GUI thread by setSource(); consumed (decoded
+    // into a rive::File) on the render thread during updatePaintNode.
+    // QByteArray is implicitly shared / copy-on-write so passing a
+    // reference across threads at the sync barrier is safe.
+    QByteArray m_pendingBytes;
+    bool m_loadPending = false;
+
+    // True once rive's advance reports "nothing more to animate".
+    // Gates the per-frame update request.
     bool m_settled = false;
 
-    // Held in unique_ptr because rive types aren't copyable and the file
-    // owns the artboard's source data.
-    std::unique_ptr<rive::File> m_file;
-    std::unique_ptr<rive::ArtboardInstance> m_artboard;
-    std::unique_ptr<rive::StateMachineInstance> m_stateMachine;
-
-    // Wall-clock tracking for the frame advance. Rive's advance() takes a
-    // delta in seconds since the last advance.
     QElapsedTimer m_frameTimer;
     qint64 m_lastAdvanceNs = 0;
+
+    // Pimpl — Metal/ObjC details stay out of this header.
+    std::unique_ptr<RiveMetalRenderer> m_renderer;
+
+    // Whether we've successfully initialized the renderer against the
+    // current window. Reset on sceneGraphInvalidated.
+    bool m_rendererInitialized = false;
 };
 
 #endif // RIVE_VIEW_H

@@ -46,24 +46,36 @@ qt_add_qml_module(rive_qt
     VERSION ${PROJECT_VERSION}
     STATIC
     SOURCES
-        src/rive_painter_factory.cpp
-        src/rive_painter_factory.h
-        src/rive_painter_renderer.cpp
-        src/rive_painter_renderer.h
+        src/rive_metal_renderer.h
+        src/rive_metal_renderer.mm
         src/rive_view.cpp
         src/rive_view.h
 )
 
 # Rive is built with RTTI off (see rive_build_config.lua — "nonstandard for
-# Rive"). Our TUs that subclass rive's Render* types must match or the
-# linker demands typeinfo symbols rive never emitted. Per-file so host
-# projects don't inherit -fno-rtti.
+# Rive"). Our TUs that touch rive types must match or the linker demands
+# typeinfo symbols rive never emitted. Per-file so host projects don't
+# inherit -fno-rtti.
 set_source_files_properties(
-    src/rive_painter_factory.cpp
-    src/rive_painter_renderer.cpp
+    src/rive_metal_renderer.mm
     src/rive_view.cpp
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
 )
+
+# rive_metal_renderer.mm uses ARC for its id<MTL...> members. Per-file so
+# the rest of the plugin (and host projects) doesn't inherit it.
+if(APPLE)
+    set_source_files_properties(
+        src/rive_metal_renderer.mm
+        PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-rtti"
+    )
+endif()
+
+# QRhi headers we use (qrhi.h, qrhi_platform.h) live under QtGui's
+# private headers in 6.10. Public in 6.6+ but the Metal native handles
+# struct stayed under the rhi/ subpath. Pick up Qt6::GuiPrivate so the
+# include search path is correct.
+find_package(Qt6 6.5 REQUIRED COMPONENTS GuiPrivate)
 
 target_include_directories(rive_qt
     PUBLIC
@@ -78,6 +90,7 @@ target_link_libraries(rive_qt
         Qt6::Quick
         Qt6::Qml
     PRIVATE
+        Qt6::GuiPrivate
         rive
 )
 
