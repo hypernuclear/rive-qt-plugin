@@ -92,6 +92,8 @@ if(WIN32)
     file(TO_NATIVE_PATH "${RIVE_BUILD_DIR}" _rive_build_dir_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/build_rive.sh" _rive_build_sh_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/setup_windows_dev.ps1" _rive_setup_ps1_native)
+    file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/dependencies/premake-core" _rive_premake_core_native)
+    file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/dependencies/premake-core/bin/v5.0.0-beta7_release" _rive_premake_install_native)
     # NOTE: we don't invoke upstream's build_rive.ps1 because it does
     # `sh build_rive.sh` (no path), which relies on CWD == rive's build
     # directory. Our wrapper CWD is the CMake build dir (for the
@@ -139,6 +141,17 @@ if(WIN32)
 "    & '${_rive_setup_ps1_native}'\n"
 "}\n"
 "\n"
+"# Wipe a stale Mach-O/ELF premake5 left over from a shared-FS Mac or\n"
+"# Linux build. Rive's bootstrap keys on `test -f premake5`, not on\n"
+"# the exe suffix, so a bare `premake5` file from a foreign OS would\n"
+"# be kept and then fail to execute here with \"Exec format error\".\n"
+"# On Windows the bootstrap produces premake5.exe, so if we see a\n"
+"# bare `premake5` but no `premake5.exe`, it's not ours.\n"
+"$riveInstallDir = '${_rive_premake_install_native}'\n"
+"if ((Test-Path (Join-Path $riveInstallDir 'premake5')) -and -not (Test-Path (Join-Path $riveInstallDir 'premake5.exe'))) {\n"
+"    Remove-Item -Recurse -Force '${_rive_premake_core_native}'\n"
+"}\n"
+"\n"
 "# Call build_rive.sh with an explicit path — CWD must stay our CMake\n"
 "# build dir so premake finds the generated premake5.lua wrapper.\n"
 "& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}'\n"
@@ -153,6 +166,13 @@ else()
 "RIVE_OUT=\"out/${RIVE_CONFIG}\"\n"
 "if [ -d \"$RIVE_OUT\" ] && [ ! -f \"$RIVE_OUT/.rive_premake_args\" ]; then\n"
 "    rm -rf \"$RIVE_OUT\"\n"
+"fi\n"
+"# Wipe a stale Windows-built premake5.exe left from a shared-FS\n"
+"# Windows build — it'd fool rive's bootstrap test into using a PE\n"
+"# binary on a Unix host.\n"
+"RIVE_PREMAKE_INSTALL=\"${RIVE_RUNTIME_DIR}/build/dependencies/premake-core/bin/v5.0.0-beta7_release\"\n"
+"if [ -f \"$RIVE_PREMAKE_INSTALL/premake5.exe\" ] && [ ! -x \"$RIVE_PREMAKE_INSTALL/premake5\" ]; then\n"
+"    rm -rf \"${RIVE_RUNTIME_DIR}/build/dependencies/premake-core\"\n"
 "fi\n"
 "exec \"${RIVE_RUNTIME_DIR}/build/build_rive.sh\" \"${RIVE_CONFIG}\"\n")
     execute_process(COMMAND chmod +x "${RIVE_BUILD_WRAPPER}")
