@@ -111,7 +111,7 @@ if(WIN32)
 "    $candidates = @(\n"
 "        \"$Env:ProgramFiles\\Git\\usr\\bin\",\n"
 "        \"$Env:ProgramFiles\\Git\\bin\",\n"
-"        \"${Env:ProgramFiles(x86)}\\Git\\usr\\bin\",\n"
+"        \"\${Env:ProgramFiles(x86)}\\Git\\usr\\bin\",\n"
 "        \"$Env:LOCALAPPDATA\\Programs\\Git\\usr\\bin\"\n"
 "    )\n"
 "    # Derive from git.exe as a fallback — sh lives in <git>\\..\\usr\\bin\\.\n"
