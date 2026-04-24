@@ -11,9 +11,8 @@ Makefile
 compile_commands.json
 .cmake/
 
-# IDEs
+# IDEs — keep .vscode/ tracked so launch/tasks configs ship with the repo.
 .idea/
-.vscode/
 .vs/
 *.user
 *.user.*

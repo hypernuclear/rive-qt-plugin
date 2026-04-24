@@ -1,0 +1,102 @@
+{
+  // Launch configs for the rive-qt-plugin viewer.
+  //
+  // Prereq: build the viewer once so the binary exists —
+  //   cmake -B build -GNinja -DCMAKE_PREFIX_PATH=/Users/leo/Qt/6.10.2/macos
+  //   cmake --build build
+  // Or use the "Build Viewer" task in tasks.json (F1 → Run Task).
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Main entry: launches the viewer under lldb / gdb with the QML
+      // debugger port exposed. Pair with "Qt: QML attach by port" via the
+      // C++/QML compound to get QML breakpoints working too.
+      "name": "Run Viewer (C++ + QML debug)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/examples/viewer/rive_viewer",
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "visualizerFile": "${command:qt-cpp.natvis}",
+      "showDisplayString": true,
+      "environment": [
+        // Opt-in logging — RiveView logs under the "rive.view" category.
+        { "name": "QT_LOGGING_RULES", "value": "rive.*=true" }
+        // { "name": "QML_IMPORT_TRACE", "value": "1" },
+        // { "name": "QSG_INFO", "value": "1" },
+        // { "name": "QSG_RENDER_TIMING", "value": "1" },
+      ],
+      "args": [
+        "-qmljsdebugger=host:127.0.0.1,port:25684,services:DebugMessages,QmlDebugger,V8Debugger,QmlInspector"
+      ],
+      "linux": {
+        "MIMode": "gdb",
+        "miDebuggerPath": "/usr/bin/gdb"
+      },
+      "osx": {
+        "MIMode": "lldb",
+        "targetArchitecture": "arm64",
+        "logging": {
+          "moduleLoad": false
+        }
+      },
+      "windows": {
+        "environment": [
+          {
+            "name": "PATH",
+            "value": "${env:PATH};${command:qt-cpp.qtDir}"
+          },
+          {
+            "name": "QT_QPA_PLATFORM_PLUGIN_PATH",
+            "value": "${command:qt-cpp.QT_QPA_PLATFORM_PLUGIN_PATH}"
+          },
+          {
+            "name": "QML_IMPORT_PATH",
+            "value": "${command:qt-cpp.QML_IMPORT_PATH}"
+          }
+        ],
+        "MIMode": "gdb",
+        "miDebuggerPath": "${command:qt-cpp.minGWgdb}"
+      },
+      "preLaunchTask": "Build Viewer"
+    },
+    {
+      // Attaches the QML debugger to the running viewer. Triggered
+      // automatically by the C++/QML compound below; rarely needed alone.
+      "name": "Qt: QML attach by port",
+      "type": "qml",
+      "request": "attach",
+      "host": "127.0.0.1",
+      "port": "25684"
+    },
+    {
+      // Plain run — no QML debugger, no preLaunch build. Use when you
+      // just want to eyeball the viewer without rebuilding.
+      "name": "Run Viewer (no debug)",
+      "type": "cppdbg",
+      "request": "launch",
+      "program": "${workspaceFolder}/build/examples/viewer/rive_viewer",
+      "stopAtEntry": false,
+      "cwd": "${workspaceFolder}",
+      "environment": [],
+      "args": [],
+      "osx": {
+        "MIMode": "lldb",
+        "targetArchitecture": "arm64",
+        "logging": {
+          "moduleLoad": false
+        }
+      }
+    }
+  ],
+  "compounds": [
+    {
+      // Press F5 on this one to get both C++ and QML breakpoints.
+      "name": "C++/QML",
+      "configurations": [
+        "Run Viewer (C++ + QML debug)",
+        "Qt: QML attach by port"
+      ]
+    }
+  ]
+}
