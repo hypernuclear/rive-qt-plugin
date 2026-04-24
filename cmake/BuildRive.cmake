@@ -99,11 +99,18 @@ if(WIN32)
     # (Windows-on-ARM x64 emulation) when processing rive's premake
     # files. On ARM64 we bootstrap premake natively from source using
     # the ARM64 MSVC tools; on x64 the vendored binary runs natively.
-    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64)$")
+    # Belt-and-suspenders: check both the target and host processor —
+    # some toolchain setups populate only one of them.
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64|AARCH64)$"
+            OR CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(ARM64|arm64|aarch64|AARCH64)$")
         set(_rive_windows_arm64 TRUE)
     else()
         set(_rive_windows_arm64 FALSE)
     endif()
+    message(STATUS
+        "BuildRive: Windows, CMAKE_SYSTEM_PROCESSOR=${CMAKE_SYSTEM_PROCESSOR}, "
+        "CMAKE_HOST_SYSTEM_PROCESSOR=${CMAKE_HOST_SYSTEM_PROCESSOR}, "
+        "arm64=${_rive_windows_arm64}")
 
     file(TO_NATIVE_PATH "${RIVE_BUILD_DIR}" _rive_build_dir_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/build_rive.sh" _rive_build_sh_native)
@@ -158,6 +165,17 @@ if(WIN32)
 "# The vendored x86-64 premake5.exe segfaults under Prism emulation\n"
 "# when processing rive's premake files. Native ARM64 cl/msbuild\n"
 "# produces an ARM64 premake that runs without emulation.\n"
+"#\n"
+"# Arch marker: if the install dir was populated by a different arch\n"
+"# (e.g. the prior x86-64 vendored path), wipe it so a stale binary\n"
+"# can't short-circuit us. Keyed on a file we write ourselves after a\n"
+"# successful native build.\n"
+"$archMarker = Join-Path $installDir '.build_host_arch'\n"
+"$installedArch = if (Test-Path $archMarker) { (Get-Content -Raw -LiteralPath $archMarker).Trim() } else { '' }\n"
+"if ($installedArch -ne 'arm64' -and (Test-Path $installDir)) {\n"
+"    Write-Host \"Wiping stale premake install (arch='$installedArch', need arm64)\"\n"
+"    Remove-Item -Recurse -Force $installDir\n"
+"}\n"
 "if (-not (Test-Path (Join-Path $installDir 'premake5.exe'))) {\n"
 "    Write-Host '=== Building native ARM64 premake5.exe ==='\n"
 "    $premakeCore = '${_rive_premake_core_native}'\n"
@@ -231,17 +249,27 @@ if(WIN32)
 "    New-Item -ItemType Directory -Force -Path $installDir | Out-Null\n"
 "    Copy-Item -Force $sourceExe (Join-Path $installDir 'premake5.exe')\n"
 "    Copy-Item -Force $sourceExe (Join-Path $installDir 'premake5')\n"
+"    Set-Content -LiteralPath $archMarker -Value 'arm64' -NoNewline\n"
 "    Write-Host '=== Native ARM64 premake installed ==='\n"
 "}\n"
 )
     else()
         file(APPEND "${RIVE_BUILD_WRAPPER}"
 "# Windows x64 path: vendored x86-64 premake5.exe runs natively.\n"
+"# Same arch-marker pattern so that switching kits (x64 <-> ARM64) on\n"
+"# the same source tree auto-reinstalls the correct binary.\n"
+"$archMarker = Join-Path $installDir '.build_host_arch'\n"
+"$installedArch = if (Test-Path $archMarker) { (Get-Content -Raw -LiteralPath $archMarker).Trim() } else { '' }\n"
+"if ($installedArch -ne 'x64' -and (Test-Path $installDir)) {\n"
+"    Write-Host \"Wiping stale premake install (arch='$installedArch', need x64)\"\n"
+"    Remove-Item -Recurse -Force $installDir\n"
+"}\n"
 "if (-not (Test-Path (Join-Path $installDir 'premake5.exe'))) {\n"
 "    Write-Host \"Installing vendored premake5.exe to $installDir\"\n"
 "    New-Item -ItemType Directory -Force -Path $installDir | Out-Null\n"
 "    Copy-Item -Force '${_rive_premake_vendored_native}' (Join-Path $installDir 'premake5.exe')\n"
 "    Copy-Item -Force '${_rive_premake_vendored_native}' (Join-Path $installDir 'premake5')\n"
+"    Set-Content -LiteralPath $archMarker -Value 'x64' -NoNewline\n"
 "}\n"
 )
     endif()
