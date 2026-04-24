@@ -89,11 +89,18 @@ set(RIVE_ALL_LIBS
 # pipeline operator and rejected).
 if(WIN32)
     set(RIVE_BUILD_WRAPPER "${RIVE_BUILD_DIR}/build_rive_wrapper.ps1")
+    # Pin premake to beta8 on Windows. beta7 (rive's default) has a Lua
+    # nil-format bug in vs2010_vcxproj.lua that crashes while generating
+    # Premake5.vcxproj with current VS 2022 17.14, killing the bootstrap
+    # before MSBuild can produce the real premake5.exe. beta8's VS
+    # generator is patched. Mac/Linux stay on rive's beta7 default —
+    # they've been exercised and work.
+    set(RIVE_PREMAKE_TAG "v5.0.0-beta8")
     file(TO_NATIVE_PATH "${RIVE_BUILD_DIR}" _rive_build_dir_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/build_rive.sh" _rive_build_sh_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/setup_windows_dev.ps1" _rive_setup_ps1_native)
     file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/dependencies/premake-core" _rive_premake_core_native)
-    file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/dependencies/premake-core/bin/v5.0.0-beta7_release" _rive_premake_install_native)
+    file(TO_NATIVE_PATH "${RIVE_RUNTIME_DIR}/build/dependencies/premake-core/bin/${RIVE_PREMAKE_TAG}_release" _rive_premake_install_native)
     # NOTE: we don't invoke upstream's build_rive.ps1 because it does
     # `sh build_rive.sh` (no path), which relies on CWD == rive's build
     # directory. Our wrapper CWD is the CMake build dir (for the
@@ -160,6 +167,9 @@ if(WIN32)
 "# binary runs on the host via Windows-on-ARM x86 emulation anyway.\n"
 "Remove-Item Env:PLATFORM -ErrorAction SilentlyContinue\n"
 "\n"
+"# Pin the premake tag rive will clone / bootstrap. See BuildRive.cmake.\n"
+"$Env:RIVE_PREMAKE_TAG = '${RIVE_PREMAKE_TAG}'\n"
+"\n"
 "# Call build_rive.sh with an explicit path — CWD must stay our CMake\n"
 "# build dir so premake finds the generated premake5.lua wrapper.\n"
 "# 2>&1 so ninja shows stderr (rive's script pipes stdout through grep,\n"
@@ -167,12 +177,21 @@ if(WIN32)
 "& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' 2>&1\n"
 "$riveExit = $LASTEXITCODE\n"
 "\n"
+"# If the MSBuild'd premake5.exe landed successfully, make sure a bare\n"
+"# `premake5` also exists. rive's bootstrap-needed test is\n"
+"# `[ ! -f premake5 ]` (no .exe), so without this companion file\n"
+"# every subsequent build would pointlessly re-bootstrap premake.\n"
+"$installedExe = Join-Path '${_rive_premake_install_native}' 'premake5.exe'\n"
+"$installedBare = Join-Path '${_rive_premake_install_native}' 'premake5'\n"
+"if ((Test-Path $installedExe) -and -not (Test-Path $installedBare)) {\n"
+"    Copy-Item -Force $installedExe $installedBare\n"
+"}\n"
+"\n"
 "# Diagnostic: if rive's script failed silently after the premake echo,\n"
 "# re-run premake5 directly so we can see what went wrong.\n"
-"if ($riveExit -ne 0 -and (Test-Path (Join-Path '${_rive_premake_install_native}' 'premake5.exe'))) {\n"
+"if ($riveExit -ne 0 -and (Test-Path $installedExe)) {\n"
 "    Write-Host '=== rive script failed — running premake5 standalone for diagnostics ==='\n"
-"    $pm = Join-Path '${_rive_premake_install_native}' 'premake5.exe'\n"
-"    & $pm 'vs2022' '--config=${RIVE_CONFIG}' '--out=out/${RIVE_CONFIG}' '--with_rive_text' '--with_rive_layout' 2>&1\n"
+"    & $installedExe 'vs2022' '--config=${RIVE_CONFIG}' '--out=out/${RIVE_CONFIG}' '--with_rive_text' '--with_rive_layout' 2>&1\n"
 "    Write-Host \"=== premake5 standalone exit: $LASTEXITCODE ===\"\n"
 "}\n"
 "\n"
