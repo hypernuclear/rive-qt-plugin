@@ -1,23 +1,8 @@
 {
-  // CMake Tools settings for the rive-qt-plugin.
-  //
-  // `cmake.configureSettings` are merged into every configure invocation,
-  // so Qt is discoverable even if the Qt VS Code extension hasn't been
-  // configured for this workspace yet. Override per-machine by placing
-  // your own CMAKE_PREFIX_PATH in user-scope settings.
-  "cmake.configureSettings": {
-    "CMAKE_PREFIX_PATH": "/Users/leo/Qt/6.10.2/macos"
-  },
-
-  // Auto-configure when opening the folder so IntelliSense has
-  // compile_commands.json right away.
+  // CMake Tools handles Qt discovery via the Qt kit you select
+  // (qt-cpp extension injects qt.toolchain.cmake). No hardcoded Qt path here.
   "cmake.configureOnOpen": true,
-
-  // Always build before F5 — matches the preLaunchTask in launch.json.
   "cmake.buildBeforeRun": true,
-
-  // Use the viewer as the default launch target so F5 just works.
-  "cmake.launchTargetPath": "${workspaceFolder}/build/examples/viewer/rive_viewer",
 
   "C_Cpp.default.compilerPath": "/usr/bin/clang++",
   "C_Cpp.errorSquiggles": "enabled"

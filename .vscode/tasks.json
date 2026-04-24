@@ -1,26 +1,10 @@
 {
-  // Build tasks for the rive-qt-plugin viewer. Triggered implicitly by
-  // launch.json's preLaunchTask, or manually via F1 → Run Task.
+  // Manual build tasks. CMake Tools handles configure via the selected
+  // Qt kit (no Qt path hardcoded here) and auto-builds before launch
+  // (cmake.buildBeforeRun). These tasks are for explicit F1 → Run Task
+  // invocation when you want to build without launching.
   "version": "2.0.0",
   "tasks": [
-    {
-      "label": "Configure",
-      "type": "shell",
-      "command": "cmake",
-      "args": [
-        "-B", "build",
-        "-S", ".",
-        "-GNinja",
-        "-DCMAKE_BUILD_TYPE=Debug",
-        "-DCMAKE_PREFIX_PATH=/Users/leo/Qt/6.10.2/macos"
-      ],
-      "group": "build",
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
     {
       "label": "Build Viewer",
       "type": "shell",
@@ -30,28 +14,9 @@
         "kind": "build",
         "isDefault": true
       },
-      // Auto-configure if build/ doesn't exist yet. CMake's own
-      // --regenerate-during-build handles incremental re-config.
-      "dependsOn": "Configure if needed",
       "problemMatcher": ["$gcc"],
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      // Runs Configure only if build/CMakeCache.txt is missing. Otherwise
-      // CMake's own --regenerate-during-build picks up CMakeLists changes.
-      "label": "Configure if needed",
-      "type": "shell",
-      "command": "bash",
-      "args": [
-        "-c",
-        "[ -f build/CMakeCache.txt ] || cmake -B build -S . -GNinja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_PREFIX_PATH=/Users/leo/Qt/6.10.2/macos"
-      ],
-      "problemMatcher": [],
-      "presentation": {
-        "reveal": "silent",
         "panel": "dedicated"
       }
     },
