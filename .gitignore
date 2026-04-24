@@ -1,0 +1,33 @@
+# Build output
+/build/
+/build-*/
+/out/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+.cmake/
+
+# IDEs
+.idea/
+.vscode/
+.vs/
+*.user
+*.user.*
+.qtcreator/
+.qmlls.ini
+
+# macOS
+.DS_Store
+
+# Editor temp
+*.swp
+*~
+
+# Submodules — contents ignored so local patches don't get accidentally
+# tracked. The submodule itself is added via .gitmodules / `git submodule`.
+third_party/**/*
+third_party/rive-runtime
