@@ -27,6 +27,12 @@ target_link_libraries(rive_viewer
         Qt6::Quick
         Qt6::QuickControls2
         rive_qt::rive_qt
+        # The static QML module `Hypernuclear.Rive` ships both a backing
+        # library (rive_qt) and a plugin target (rive_qtplugin) that holds
+        # the QML type registrations. Link both — without the plugin,
+        # `import Hypernuclear.Rive` fails at runtime with
+        # "plugin rive_qtplugin not found".
+        rive_qtplugin
 )
 
 # Hand the absolute samples directory to the QML runtime so Main.qml can
