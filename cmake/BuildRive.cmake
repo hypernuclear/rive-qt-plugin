@@ -163,7 +163,27 @@ if(WIN32)
 "# Call build_rive.sh with an explicit path — CWD must stay our CMake\n"
 "# build dir so premake finds the generated premake5.lua wrapper.\n"
 "& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}'\n"
-"exit $LASTEXITCODE\n")
+"$riveExit = $LASTEXITCODE\n"
+"\n"
+"# Premake beta7's own Lua has a bug generating its Premake5.vcxproj\n"
+"# (src/base/premake.lua:371 -- 'bad argument #2 to format'), so the\n"
+"# second-stage MSBuild of premake5.exe fails. But the bootstrap exe\n"
+"# at build/bootstrap/premake_bootstrap.exe already ran `embed` and\n"
+"# IS a working premake. Recover by copying it as premake5.exe into\n"
+"# the path rive's script expected and re-running.\n"
+"$installDir = '${_rive_premake_install_native}'\n"
+"$bootstrapExe = Join-Path '${_rive_premake_core_native}' 'build\\bootstrap\\premake_bootstrap.exe'\n"
+"if ($riveExit -ne 0 -and (Test-Path $bootstrapExe) -and -not (Test-Path (Join-Path $installDir 'premake5.exe'))) {\n"
+"    Write-Host 'Premake MSBuild step failed (known beta7 bug); using premake_bootstrap as premake5.'\n"
+"    New-Item -ItemType Directory -Force -Path $installDir | Out-Null\n"
+"    Copy-Item -Force $bootstrapExe (Join-Path $installDir 'premake5.exe')\n"
+"    # Clear stale out/release so rive re-runs premake against the\n"
+"    # generated wrapper premake5.lua with the now-present exe.\n"
+"    if (Test-Path 'out/${RIVE_CONFIG}') { Remove-Item -Recurse -Force 'out/${RIVE_CONFIG}' }\n"
+"    & sh '${_rive_build_sh_native}' '${RIVE_CONFIG}'\n"
+"    $riveExit = $LASTEXITCODE\n"
+"}\n"
+"exit $riveExit\n")
 else()
     set(RIVE_BUILD_WRAPPER "${RIVE_BUILD_DIR}/build_rive_wrapper.sh")
     file(WRITE "${RIVE_BUILD_WRAPPER}"
