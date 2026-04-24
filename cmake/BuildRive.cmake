@@ -169,7 +169,23 @@ if(WIN32)
 "# its own bootstrap entirely, jumping straight to `premake5 vs2022` +\n"
 "# msbuild of the rive libs. 2>&1 so stderr surfaces through ninja.\n"
 "& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' 2>&1\n"
-"exit $LASTEXITCODE\n")
+"$riveExit = $LASTEXITCODE\n"
+"\n"
+"# If rive's script failed silently (rive's `| grep -v 'Done ...'`\n"
+"# pipeline can swallow premake5 errors with buffering), re-run premake\n"
+"# ourselves so the error actually reaches ninja.\n"
+"if ($riveExit -ne 0) {\n"
+"    Write-Host ''\n"
+"    Write-Host '=== rive script failed. Re-running premake5 directly for diagnostics ==='\n"
+"    $pm = Join-Path '${_rive_premake_install_native}' 'premake5.exe'\n"
+"    Write-Host \"premake: $pm\"\n"
+"    Write-Host \"exists: $(Test-Path $pm)\"\n"
+"    if (Test-Path $pm) {\n"
+"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' 2>&1\n"
+"        Write-Host \"=== premake5 standalone exit: $LASTEXITCODE ===\"\n"
+"    }\n"
+"}\n"
+"exit $riveExit\n")
 else()
     set(RIVE_BUILD_WRAPPER "${RIVE_BUILD_DIR}/build_rive_wrapper.sh")
     file(WRITE "${RIVE_BUILD_WRAPPER}"
