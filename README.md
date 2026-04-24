@@ -18,11 +18,15 @@ Early spike. Functional enough to render most `.riv` files upstream ships as dem
 
 ## Build (standalone viewer)
 
+The repo ships a `CMakePresets.json` that pins the generator to Ninja (avoids the NMake+JOM trip-up on Windows kits). In Qt Creator / VS Code CMake Tools, just select a Qt kit and the preset is picked up automatically — Qt comes from the kit's toolchain file.
+
+From the CLI you also need to point CMake at your Qt install:
+
 ```sh
 git clone --recursive git@github.com:hypernuclear/rive-qt-plugin.git
 cd rive-qt-plugin
-cmake -B build -GNinja
-cmake --build build
+cmake --preset default -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.2/macos
+cmake --build --preset viewer
 ./build/examples/viewer/rive_viewer
 ```
 
