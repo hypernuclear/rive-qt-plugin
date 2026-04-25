@@ -136,6 +136,11 @@ QStringList RiveView::artboardNames() const
     return m_file ? m_file->artboardNames() : QStringList{};
 }
 
+QStringList RiveView::stateMachineNames() const
+{
+    return m_artboard ? m_artboard->stateMachineNames() : QStringList{};
+}
+
 void RiveView::requestLoad()
 {
     m_loadRequested = true;
@@ -196,8 +201,10 @@ void RiveView::rebuildArtboard()
         emit loadFailed(m_artboardName.isEmpty()
                              ? QStringLiteral("No default artboard in .riv file")
                              : QStringLiteral("Artboard not found: %1").arg(m_artboardName));
+        emit stateMachineNamesChanged();
         return;
     }
+    emit stateMachineNamesChanged();
     rebuildStateMachine();
 }
 

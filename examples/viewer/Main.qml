@@ -51,9 +51,13 @@ ApplicationWindow {
                 model: samplesModel
                 onActivated: {
                     rive.source = "file://" + currentValue
-                    // Reset per-source selectors to defaults.
+                    // New file → reset per-source selectors. The
+                    // ComboBoxes below auto-rebuild from rive's
+                    // stateMachineNames / artboardNames.
                     artboardSelector.currentIndex = 0
-                    stateMachineField.text = ""
+                    stateMachineSelector.currentIndex = 0
+                    rive.artboard = ""
+                    rive.stateMachineName = ""
                 }
             }
 
@@ -69,16 +73,29 @@ ApplicationWindow {
                     const base = [qsTr("(default)")]
                     return base.concat(rive.artboardNames)
                 }
-                onActivated: rive.artboard = (currentIndex === 0 ? "" : currentText)
+                onActivated: {
+                    rive.artboard = (currentIndex === 0 ? "" : currentText)
+                    // Artboard change resets SM choice — its list is
+                    // about to refresh.
+                    stateMachineSelector.currentIndex = 0
+                    rive.stateMachineName = ""
+                }
             }
 
-            Label { text: qsTr("SM:"); color: "#ddd" }
+            Label { text: qsTr("State machine:"); color: "#ddd" }
 
-            TextField {
-                id: stateMachineField
-                Layout.preferredWidth: 140
-                placeholderText: qsTr("default")
-                onEditingFinished: rive.stateMachineName = text
+            ComboBox {
+                id: stateMachineSelector
+                Layout.preferredWidth: 180
+                // First entry = use the artboard's default SM (empty
+                // string passed to RiveView). Rest come from the active
+                // artboard.
+                model: {
+                    const base = [qsTr("(default)")]
+                    return base.concat(rive.stateMachineNames)
+                }
+                onActivated: rive.stateMachineName =
+                    (currentIndex === 0 ? "" : currentText)
             }
 
             Button {

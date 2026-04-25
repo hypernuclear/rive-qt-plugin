@@ -53,6 +53,7 @@ class RiveView : public QQuickItem
     Q_PROPERTY(bool inputForwarding READ inputForwarding WRITE setInputForwarding
                    NOTIFY inputForwardingChanged)
     Q_PROPERTY(QStringList artboardNames READ artboardNames NOTIFY artboardNamesChanged)
+    Q_PROPERTY(QStringList stateMachineNames READ stateMachineNames NOTIFY stateMachineNamesChanged)
 
 public:
     enum class Fit
@@ -87,6 +88,7 @@ public:
     void setInputForwarding(bool b);
 
     QStringList artboardNames() const;
+    QStringList stateMachineNames() const;
 
     // Active state machine for QML binding. Returns nullptr before load
     // completes or if the named SM doesn't exist. The pointer is stable
@@ -104,6 +106,7 @@ signals:
     void playingChanged();
     void inputForwardingChanged();
     void artboardNamesChanged();
+    void stateMachineNamesChanged();
 
     void loadFailed(const QString& reason);
     void eventReported(const RiveEvent& event);

@@ -29,6 +29,18 @@ rive::ArtboardInstance* RiveArtboard::raw() const
     return m_artboard.get();
 }
 
+QStringList RiveArtboard::stateMachineNames() const
+{
+    QStringList out;
+    if (!m_artboard)
+        return out;
+    const std::size_t n = m_artboard->stateMachineCount();
+    out.reserve(static_cast<int>(n));
+    for (std::size_t i = 0; i < n; ++i)
+        out.append(QString::fromStdString(m_artboard->stateMachineNameAt(i)));
+    return out;
+}
+
 RiveStateMachine* RiveArtboard::createStateMachine(const QString& name)
 {
     if (!m_artboard)

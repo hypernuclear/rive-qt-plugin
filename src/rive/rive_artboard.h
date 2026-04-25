@@ -15,6 +15,7 @@
 #include <QObject>
 #include <QSizeF>
 #include <QString>
+#include <QStringList>
 
 #include <memory>
 
@@ -30,6 +31,7 @@ class RiveArtboard : public QObject
     Q_PROPERTY(QString name READ name CONSTANT)
     Q_PROPERTY(qreal width READ width CONSTANT)
     Q_PROPERTY(qreal height READ height CONSTANT)
+    Q_PROPERTY(QStringList stateMachineNames READ stateMachineNames CONSTANT)
 
 public:
     RiveArtboard(std::unique_ptr<rive::ArtboardInstance> instance,
@@ -41,6 +43,9 @@ public:
     qreal width() const;
     qreal height() const;
     QSizeF size() const { return QSizeF(width(), height()); }
+
+    // State machines defined on this artboard, in declaration order.
+    QStringList stateMachineNames() const;
 
     // Raw access for the render backend.
     rive::ArtboardInstance* raw() const;
