@@ -46,27 +46,48 @@ qt_add_qml_module(rive_qt
     VERSION ${PROJECT_VERSION}
     STATIC
     SOURCES
-        src/rive_metal_renderer.h
-        src/rive_metal_renderer.mm
+        src/backends/rive_render_backend.h
+        src/rive/rive_artboard.cpp
+        src/rive/rive_artboard.h
+        src/rive/rive_event.h
+        src/rive/rive_file.cpp
+        src/rive/rive_file.h
+        src/rive/rive_input.cpp
+        src/rive/rive_input.h
+        src/rive/rive_key_map.cpp
+        src/rive/rive_key_map.h
+        src/rive/rive_state_machine.cpp
+        src/rive/rive_state_machine.h
         src/rive_view.cpp
         src/rive_view.h
 )
 
+# Metal backend — Apple only.
+if(APPLE)
+    target_sources(rive_qt PRIVATE
+        src/backends/metal/rive_metal_backend.h
+        src/backends/metal/rive_metal_backend.mm
+    )
+endif()
+
 # Rive is built with RTTI off (see rive_build_config.lua — "nonstandard for
-# Rive"). Our TUs that touch rive types must match or the linker demands
+# Rive"). Every TU that touches rive types must match or the linker demands
 # typeinfo symbols rive never emitted. Per-file so host projects don't
 # inherit -fno-rtti.
 set_source_files_properties(
-    src/rive_metal_renderer.mm
+    src/rive/rive_artboard.cpp
+    src/rive/rive_file.cpp
+    src/rive/rive_input.cpp
+    src/rive/rive_key_map.cpp
+    src/rive/rive_state_machine.cpp
     src/rive_view.cpp
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
 )
 
-# rive_metal_renderer.mm uses ARC for its id<MTL...> members. Per-file so
-# the rest of the plugin (and host projects) doesn't inherit it.
+# The Metal backend .mm uses ARC for its id<MTL...> members.
 if(APPLE)
     set_source_files_properties(
-        src/rive_metal_renderer.mm
+        src/backends/metal/rive_metal_backend.mm
         PROPERTIES COMPILE_OPTIONS "-fobjc-arc;-fno-rtti"
     )
 endif()
