@@ -328,34 +328,3 @@ void RiveMetalBackend::abandonGraphicsResources()
     m_impl->window = nullptr;
 }
 
-// Static factory — at the moment there's only Metal, but the switch
-// already exists so adding D3D/Vulkan later is a matter of adding
-// branches, not restructuring callers.
-std::unique_ptr<RiveRenderBackend>
-RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
-{
-    if (!window)
-    {
-        if (errorOut)
-            *errorOut = QStringLiteral("RiveRenderBackend::create: null window");
-        return nullptr;
-    }
-    QSGRendererInterface* rif = window->rendererInterface();
-    if (!rif)
-    {
-        if (errorOut)
-            *errorOut = QStringLiteral(
-                "RiveRenderBackend::create: window has no renderer interface");
-        return nullptr;
-    }
-    switch (rif->graphicsApi())
-    {
-    case QSGRendererInterface::Metal:
-        return std::make_unique<RiveMetalBackend>();
-    default:
-        if (errorOut)
-            *errorOut = QStringLiteral(
-                "RiveRenderBackend::create: no backend for this RHI graphics API");
-        return nullptr;
-    }
-}

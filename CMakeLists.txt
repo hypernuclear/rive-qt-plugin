@@ -46,6 +46,7 @@ qt_add_qml_module(rive_qt
     VERSION ${PROJECT_VERSION}
     STATIC
     SOURCES
+        src/backends/rive_render_backend.cpp
         src/backends/rive_render_backend.h
         src/rive/rive_artboard.cpp
         src/rive/rive_artboard.h

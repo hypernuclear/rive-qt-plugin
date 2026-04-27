@@ -347,12 +347,15 @@ target_link_libraries(rive INTERFACE ${RIVE_ALL_LIBS})
 
 # Rive's public headers. Internal-to-rive includes (harfbuzz/src,
 # sheenbidi/Headers) aren't needed by consumers since rive wraps them.
-target_include_directories(rive INTERFACE "${RIVE_RUNTIME_DIR}/include")
-
-# PLS renderer's public headers (only present when we built it).
-if(APPLE)
-    target_include_directories(rive INTERFACE "${RIVE_RUNTIME_DIR}/renderer/include")
-endif()
+# The renderer/ headers (rive/renderer/render_context.hpp etc.) live in a
+# separate include root from rive-runtime's core; expose both. They're
+# part of the source tree regardless of whether we build the PLS lib —
+# RiveQtFactory references the types virtually so no PLS symbols need
+# to resolve at link time on platforms where we don't build it.
+target_include_directories(rive INTERFACE
+    "${RIVE_RUNTIME_DIR}/include"
+    "${RIVE_RUNTIME_DIR}/renderer/include"
+)
 
 # Frameworks rive's Apple font backend (src/text/font_hb_apple.mm) needs,
 # plus Metal/QuartzCore for the PLS Metal renderer's command-buffer
