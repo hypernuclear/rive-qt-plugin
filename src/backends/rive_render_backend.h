@@ -80,6 +80,12 @@ public:
     // it tears down.
     virtual void abandonGraphicsResources() = 0;
 
+    // True when the texture returned by ensureTexture() has its origin
+    // at the bottom-left (OpenGL convention). Qt's compositor samples
+    // textures with origin top-left, so consumers must mirror the V
+    // axis when this is true. Default false matches Metal/D3D11/Vulkan.
+    virtual bool textureOriginIsBottomLeft() const { return false; }
+
     // Pick a backend matching the window's RHI. Returns nullptr with
     // errorOut populated if no match (e.g. non-Metal RHI on macOS).
     static std::unique_ptr<RiveRenderBackend> create(QQuickWindow* window,

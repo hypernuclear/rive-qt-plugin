@@ -95,6 +95,15 @@ if(WIN32)
     )
 endif()
 
+# OpenGL backend — Windows + Linux. macOS is excluded: Apple deprecated
+# GL, and we have Metal there anyway.
+if(NOT APPLE)
+    target_sources(rive_qt PRIVATE
+        src/backends/gl/rive_gl_backend.h
+        src/backends/gl/rive_gl_backend.cpp
+    )
+endif()
+
 # Rive is built with RTTI off (see rive_build_config.lua — "nonstandard for
 # Rive"). Every TU that touches rive types must match or the linker demands
 # typeinfo symbols rive never emitted. Per-file so host projects don't
@@ -117,6 +126,14 @@ set_source_files_properties(
 if(WIN32)
     set_source_files_properties(
         src/backends/d3d11/rive_d3d11_backend.cpp
+        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
+    )
+endif()
+
+# GL backend pulls in rive::gpu types too — same RTTI-off ABI match.
+if(NOT APPLE)
+    set_source_files_properties(
+        src/backends/gl/rive_gl_backend.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
     )
 endif()

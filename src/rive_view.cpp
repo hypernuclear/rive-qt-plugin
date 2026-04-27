@@ -724,6 +724,13 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     if (node->texture() != tex)
         node->setTexture(tex);
     node->setRect(QRectF(0, 0, itemSize.width(), itemSize.height()));
+    // GL writes textures bottom-up; Qt samples top-down. Backends that
+    // produce bottom-left-origin textures (currently just GL) ask us to
+    // mirror the V axis so the displayed image is right-side-up.
+    node->setTextureCoordinatesTransform(
+        m_backend->textureOriginIsBottomLeft()
+            ? QSGSimpleTextureNode::MirrorVertically
+            : QSGSimpleTextureNode::NoTransform);
 
     m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_fit));
 

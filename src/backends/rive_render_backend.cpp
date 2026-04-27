@@ -21,6 +21,12 @@
 #include "d3d11/rive_d3d11_backend.h"
 #endif
 
+// GL backend covers Windows + Linux. macOS is intentionally excluded:
+// Apple deprecated GL and we have a Metal backend there anyway.
+#if !defined(__APPLE__)
+#include "gl/rive_gl_backend.h"
+#endif
+
 std::unique_ptr<RiveRenderBackend>
 RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
 {
@@ -52,6 +58,12 @@ RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
     // rather than a crash; switching back to the default RHI restores
     // rendering.
 #endif
+#if !defined(__APPLE__)
+    case QSGRendererInterface::OpenGL:
+        return std::make_unique<RiveGLBackend>();
+#endif
+    // Vulkan also falls through for now; the Vulkan backend is the
+    // next planned phase.
     default:
         if (errorOut)
             *errorOut = QStringLiteral(

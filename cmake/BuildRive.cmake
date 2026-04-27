@@ -423,16 +423,42 @@ target_include_directories(rive INTERFACE
     "${RIVE_RUNTIME_DIR}/renderer/include"
 )
 
+# OpenGL: Rive's GL headers (rive/renderer/gl/gles3.hpp ->
+# glad_custom.h -> <glad/gles2.h>) need two extra include roots.
+# RIVE_DESKTOP_GL is the gate that switches gles3.hpp's includes from
+# Android/WebGL paths to glad_custom.h; Rive's premake defines it for
+# consumers too, but premake's "defines outside project" don't cross
+# into our CMake build so we re-assert it here.
+if(APPLE OR WIN32 OR (UNIX AND NOT APPLE))
+    target_include_directories(rive INTERFACE
+        "${RIVE_RUNTIME_DIR}/renderer/glad"
+        "${RIVE_RUNTIME_DIR}/renderer/glad/include"
+    )
+    target_compile_definitions(rive INTERFACE RIVE_DESKTOP_GL)
+endif()
+
 # Windows: PLS uses D3D11 + DXGI; D3DCompiler is needed for runtime
 # shader compilation (rive's premake build emits HLSL shaders that the
-# pipeline manager compiles on first use).
+# pipeline manager compiles on first use). opengl32 covers the GL
+# backend's link surface (Rive's GL backend dispatches via GLAD-loaded
+# function pointers, so we don't strictly need the import lib for
+# extension entry points — but glGetString and the few non-extension
+# core entry points still link directly against opengl32).
 if(WIN32)
     target_link_libraries(rive INTERFACE
         d3d11
         dxgi
         dxguid
         d3dcompiler
+        opengl32
     )
+endif()
+
+# Linux: GL backend needs libGL. Apple GL on macOS comes via Qt's link
+# of the OpenGL.framework, so no extra link there (we don't actually
+# build the GL backend on Apple anyway — Metal is preferred).
+if(UNIX AND NOT APPLE)
+    target_link_libraries(rive INTERFACE GL)
 endif()
 
 # Frameworks rive's Apple font backend (src/text/font_hb_apple.mm) needs,
