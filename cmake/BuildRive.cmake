@@ -33,10 +33,43 @@ get_filename_component(_rive_qt_plugin_dir "${CMAKE_CURRENT_LIST_DIR}/.." ABSOLU
 set(RIVE_RUNTIME_DIR "${_rive_qt_plugin_dir}/third_party/rive-runtime")
 set(RIVE_BUILD_DIR "${CMAKE_BINARY_DIR}/rive-build")
 
-# Release only for now. Debug doubles library sizes and the perf hit of a
-# debug rive build isn't worth it during development — the spike target is
-# "frame on screen", not "step through rive internals".
-set(RIVE_CONFIG "release")
+# Pick rive's build config so its CRT matches Qt's on Windows. MSVC refuses
+# to link objects with mismatched _ITERATOR_DEBUG_LEVEL or RuntimeLibrary —
+# a Qt Debug app (/MDd) can't consume a /MT rive. We track CMAKE_BUILD_TYPE
+# and force premake to emit the dynamic CRT via rive's
+# --windows_runtime=dynamic_{debug,release} option, since Qt on Windows is
+# built dynamic.
+#
+# Multi-config generators (Visual Studio, Xcode) leave CMAKE_BUILD_TYPE
+# empty and pick the config at build time. Our wrapper bakes one config in,
+# so we can't satisfy both Debug and Release from a single configure;
+# warn and fall back to release. Use Ninja (single-config) if you need
+# Debug rive on Windows.
+#
+# On macOS/Linux there's no CRT to match; debug rive doubles binary size
+# and the perf hit isn't worth it during development, so we stay on
+# release regardless of CMAKE_BUILD_TYPE.
+if(WIN32)
+    if(DEFINED CMAKE_CONFIGURATION_TYPES AND CMAKE_CONFIGURATION_TYPES)
+        message(WARNING
+            "BuildRive: multi-config generator detected. rive will be built "
+            "as release/dynamic only — per-config CRT selection requires "
+            "regenerating premake at build time, which the current wrapper "
+            "doesn't support. Use Ninja for Debug builds.")
+        set(RIVE_CONFIG "release")
+    else()
+        string(TOLOWER "${CMAKE_BUILD_TYPE}" _rive_cmake_build_type_lower)
+        if(_rive_cmake_build_type_lower STREQUAL "debug")
+            set(RIVE_CONFIG "debug")
+        else()
+            set(RIVE_CONFIG "release")
+        endif()
+    endif()
+    set(RIVE_WINDOWS_RUNTIME_FLAG "--windows_runtime=dynamic_${RIVE_CONFIG}")
+else()
+    set(RIVE_CONFIG "release")
+    set(RIVE_WINDOWS_RUNTIME_FLAG "")
+endif()
 set(RIVE_OUT_DIR "${RIVE_BUILD_DIR}/out/${RIVE_CONFIG}")
 
 # Generated wrapper premake file. build_rive.sh expects a premake5.lua in
@@ -131,6 +164,21 @@ if(WIN32)
 "if ((Test-Path $out) -and -not (Test-Path \"$out/.rive_premake_args\")) {\n"
 "    Remove-Item -Recurse -Force $out\n"
 "}\n"
+"# rive's build_rive.sh aborts hard when the cached premake args from a\n"
+"# prior build don't match this run's args. That's the right call for\n"
+"# rive's CLI users, but here CMake is the source of truth and a config\n"
+"# change (e.g. flipping the CRT flag) should just rebuild. Detect a\n"
+"# mismatch on the windows_runtime flag and wipe so build_rive.sh\n"
+"# reconfigures cleanly.\n"
+"$expectedRuntimeFlag = '${RIVE_WINDOWS_RUNTIME_FLAG}'\n"
+"$argsFile = Join-Path $out '.rive_premake_args'\n"
+"if ((Test-Path $argsFile) -and $expectedRuntimeFlag -ne '') {\n"
+"    $existing = Get-Content -Raw -LiteralPath $argsFile\n"
+"    if ($existing -notmatch [regex]::Escape($expectedRuntimeFlag)) {\n"
+"        Write-Host \"BuildRive: stale premake config (need $expectedRuntimeFlag); wiping $out\"\n"
+"        Remove-Item -Recurse -Force $out\n"
+"    }\n"
+"}\n"
 "\n"
 "# Rive's build_rive.sh shells out to sh. Qt Creator's build env doesn't\n"
 "# inherit Git-for-Windows' usr\\bin where sh.exe lives, so find it and\n"
@@ -209,7 +257,7 @@ if(WIN32)
 "# 0. Drive success off $LASTEXITCODE instead.\n"
 "$prevPref = $ErrorActionPreference\n"
 "$ErrorActionPreference = 'Continue'\n"
-"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' 2>&1\n"
+"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' '${RIVE_WINDOWS_RUNTIME_FLAG}' 2>&1\n"
 "$riveExit = $LASTEXITCODE\n"
 "$ErrorActionPreference = $prevPref\n"
 "\n"
@@ -220,7 +268,7 @@ if(WIN32)
 "    Write-Host '=== rive script failed. Re-running premake5 directly for diagnostics ==='\n"
 "    $pm = Join-Path $installDir 'premake5.exe'\n"
 "    if (Test-Path $pm) {\n"
-"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' 2>&1\n"
+"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' '${RIVE_WINDOWS_RUNTIME_FLAG}' 2>&1\n"
 "        Write-Host \"=== premake5 standalone exit: $LASTEXITCODE ===\"\n"
 "    }\n"
 "}\n"
