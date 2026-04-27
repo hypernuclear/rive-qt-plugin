@@ -16,6 +16,8 @@
 
 #include "rive_metal_backend.h"
 
+#include "../../rive/rive_qt_factory.h"
+
 #include <QLoggingCategory>
 #include <QPointer>
 #include <QQuickWindow>
@@ -74,6 +76,7 @@ struct RiveMetalBackend::Impl
     id<MTLCommandQueue> queue = nil;
 
     std::unique_ptr<rive::gpu::RenderContext> renderContext;
+    std::unique_ptr<RiveQtFactory> factory;
     rive::rcp<rive::gpu::RenderTargetMetal> renderTarget;
 
     id<MTLTexture> targetTexture = nil;
@@ -108,7 +111,9 @@ RiveMetalBackend::RiveMetalBackend() : m_impl(std::make_unique<Impl>()) {}
 
 RiveMetalBackend::~RiveMetalBackend()
 {
-    // Drop rive state before the device disappears.
+    // Drop rive state before the device disappears. Factory borrows
+    // the RenderContext so it goes first.
+    m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
 
@@ -174,6 +179,10 @@ bool RiveMetalBackend::initialize(QQuickWindow* window, QString* errorOut)
         return false;
     }
 
+    // QImage-backed factory wrapper so embedded raster art in .riv
+    // files decodes (rive_decoders is disabled in this build).
+    m_impl->factory = std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+
     qCInfo(lcRiveMetalBackend) << "Initialized on device" << m_impl->device.name.UTF8String;
     return true;
 }
@@ -185,7 +194,7 @@ bool RiveMetalBackend::isInitialized() const
 
 rive::Factory* RiveMetalBackend::factory() const
 {
-    return m_impl->renderContext.get();
+    return m_impl->factory.get();
 }
 
 QSGTexture* RiveMetalBackend::ensureTexture(const QSize& pixelSize)
@@ -306,6 +315,7 @@ void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit
 
 void RiveMetalBackend::abandonGraphicsResources()
 {
+    m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->qsgTexture = nullptr;

@@ -8,6 +8,8 @@
 #include <QMutexLocker>
 
 #include <rive/artboard.hpp>
+#include <rive/viewmodel/viewmodel.hpp>
+#include <rive/viewmodel/viewmodel_instance.hpp>
 
 namespace {
 
@@ -156,4 +158,52 @@ std::unique_ptr<RiveArtboard> RiveFile::createArtboard(const QString& name) cons
     if (!instance)
         return nullptr;
     return std::make_unique<RiveArtboard>(std::move(instance), std::move(resolvedName));
+}
+
+rive::File* RiveFile::raw() const
+{
+    return m_file.get();
+}
+
+QStringList RiveFile::viewModelNames() const
+{
+    QStringList out;
+    if (!m_file)
+        return out;
+    const std::size_t n = m_file->viewModelCount();
+    out.reserve(static_cast<int>(n));
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (rive::ViewModel* vm = m_file->viewModel(i))
+            out.append(QString::fromStdString(vm->name()));
+    }
+    return out;
+}
+
+int RiveFile::viewModelCount() const
+{
+    return m_file ? static_cast<int>(m_file->viewModelCount()) : 0;
+}
+
+rive::rcp<rive::ViewModelInstance>
+RiveFile::createViewModelInstance(rive::ArtboardInstance* artboard,
+                                  const QString& viewModelName,
+                                  const QString& instanceName) const
+{
+    if (!m_file)
+        return nullptr;
+
+    if (viewModelName.isEmpty())
+    {
+        // Default path: instance follows the artboard's editor binding.
+        if (!artboard)
+            return nullptr;
+        return m_file->createDefaultViewModelInstance(artboard);
+    }
+
+    if (instanceName.isEmpty())
+        return m_file->createViewModelInstance(viewModelName.toStdString());
+
+    return m_file->createViewModelInstance(viewModelName.toStdString(),
+                                           instanceName.toStdString());
 }

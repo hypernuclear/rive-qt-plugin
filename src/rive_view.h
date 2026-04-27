@@ -23,6 +23,7 @@
 #include "rive/rive_artboard.h"
 #include "rive/rive_event.h"
 #include "rive/rive_state_machine.h"
+#include "rive/rive_view_model.h"
 
 #include <QByteArray>
 #include <QElapsedTimer>
@@ -54,6 +55,21 @@ class RiveView : public QQuickItem
                    NOTIFY inputForwardingChanged)
     Q_PROPERTY(QStringList artboardNames READ artboardNames NOTIFY artboardNamesChanged)
     Q_PROPERTY(QStringList stateMachineNames READ stateMachineNames NOTIFY stateMachineNamesChanged)
+    Q_PROPERTY(QStringList viewModelNames READ viewModelNames NOTIFY viewModelNamesChanged)
+    // The bound view model (or null). Defaults to the artboard's
+    // editor-attached default. Override via `viewModelName` /
+    // `viewModelInstanceName` properties.
+    Q_PROPERTY(QString viewModelName READ viewModelName WRITE setViewModelName
+                   NOTIFY viewModelNameChanged)
+    Q_PROPERTY(QString viewModelInstanceName READ viewModelInstanceName
+                   WRITE setViewModelInstanceName NOTIFY viewModelInstanceNameChanged)
+    Q_PROPERTY(RiveViewModelInstance* viewModel READ viewModel NOTIFY viewModelChanged)
+    // Drive the artboard's runtime layout. Invalid (default) = use the
+    // editor-authored design-time size. Setting a valid QSizeF drives
+    // the artboard size and re-runs layout. Useful for responsive
+    // artwork authored with rive's layout system.
+    Q_PROPERTY(QSizeF layoutSize READ layoutSize WRITE setLayoutSize
+                   NOTIFY layoutSizeChanged)
 
 public:
     enum class Fit
@@ -89,6 +105,18 @@ public:
 
     QStringList artboardNames() const;
     QStringList stateMachineNames() const;
+    QStringList viewModelNames() const;
+
+    QString viewModelName() const { return m_viewModelName; }
+    void setViewModelName(const QString& name);
+
+    QString viewModelInstanceName() const { return m_viewModelInstanceName; }
+    void setViewModelInstanceName(const QString& name);
+
+    RiveViewModelInstance* viewModel() const { return m_viewModel.get(); }
+
+    QSizeF layoutSize() const { return m_layoutSize; }
+    void setLayoutSize(const QSizeF& size);
 
     // Active state machine for QML binding. Returns nullptr before load
     // completes or if the named SM doesn't exist. The pointer is stable
@@ -107,6 +135,11 @@ signals:
     void inputForwardingChanged();
     void artboardNamesChanged();
     void stateMachineNamesChanged();
+    void viewModelNamesChanged();
+    void viewModelNameChanged();
+    void viewModelInstanceNameChanged();
+    void viewModelChanged();
+    void layoutSizeChanged();
 
     void loadFailed(const QString& reason);
     void eventReported(const RiveEvent& event);
@@ -119,6 +152,7 @@ protected:
     void mouseReleaseEvent(QMouseEvent* event) override;
     void hoverMoveEvent(QHoverEvent* event) override;
     void hoverLeaveEvent(QHoverEvent* event) override;
+    void touchEvent(QTouchEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void keyReleaseEvent(QKeyEvent* event) override;
 
@@ -131,12 +165,16 @@ private:
     void tryLoad();           // on render thread; creates artboard + SM
     void rebuildArtboard();   // called when `artboard` prop changes
     void rebuildStateMachine(); // called when `stateMachineName` prop changes
+    void rebuildViewModel();    // called after artboard/SM rebuild or VM-name prop change
     QPointF mapToArtboard(const QPointF& localPos) const;
-    void dispatchPointer(QEvent::Type type, const QPointF& localPos);
+    void dispatchPointer(QEvent::Type type, const QPointF& localPos, int pointerId = 0);
 
     QUrl m_source;
-    QString m_artboardName;        // "" = default
-    QString m_stateMachineName;    // "" = default
+    QString m_artboardName;          // "" = default
+    QString m_stateMachineName;      // "" = default
+    QString m_viewModelName;         // "" = follow the artboard's editor binding
+    QString m_viewModelInstanceName; // "" = blank instance / default preset
+    QSizeF m_layoutSize;             // invalid = use design-time size
     Fit m_fit = Fit::Contain;
     bool m_playing = true;
     bool m_inputForwarding = true;
@@ -166,6 +204,13 @@ private:
     // QPointer auto-nulls when the artboard swaps.
     std::unique_ptr<RiveArtboard> m_artboard;
     QPointer<RiveStateMachine> m_stateMachine;
+
+    // View model: own as unique_ptr (created on render thread, never
+    // re-parented across threads). RiveView holds the canonical
+    // pointer; QML reads via the `viewModel` Q_PROPERTY.
+    std::unique_ptr<RiveViewModelInstance> m_viewModel;
+    QString m_loadedViewModelName;
+    QString m_loadedViewModelInstanceName;
 };
 
 #endif // RIVE_VIEW_H

@@ -24,6 +24,32 @@ qreal RiveArtboard::height() const
     return m_artboard ? static_cast<qreal>(m_artboard->height()) : 0.0;
 }
 
+qreal RiveArtboard::originalWidth() const
+{
+    return m_artboard ? static_cast<qreal>(m_artboard->originalWidth()) : 0.0;
+}
+
+qreal RiveArtboard::originalHeight() const
+{
+    return m_artboard ? static_cast<qreal>(m_artboard->originalHeight()) : 0.0;
+}
+
+void RiveArtboard::setSize(const QSizeF& size)
+{
+    if (!m_artboard || !size.isValid())
+        return;
+    m_artboard->width(static_cast<float>(size.width()));
+    m_artboard->height(static_cast<float>(size.height()));
+}
+
+void RiveArtboard::resetSize()
+{
+    if (!m_artboard)
+        return;
+    m_artboard->width(m_artboard->originalWidth());
+    m_artboard->height(m_artboard->originalHeight());
+}
+
 rive::ArtboardInstance* RiveArtboard::raw() const
 {
     return m_artboard.get();
@@ -113,4 +139,11 @@ bool RiveArtboard::focusDown()
 {
     auto* fm = m_artboard ? m_artboard->focusManager() : nullptr;
     return fm ? fm->focusDown() : false;
+}
+
+void RiveArtboard::bindViewModelInstance(rive::rcp<rive::ViewModelInstance> instance)
+{
+    if (!m_artboard || !instance)
+        return;
+    m_artboard->bindViewModelInstance(std::move(instance));
 }

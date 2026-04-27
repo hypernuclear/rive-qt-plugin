@@ -35,6 +35,12 @@
 
 #include <rive/file.hpp>
 
+namespace rive {
+class ArtboardInstance;
+class ViewModel;
+class ViewModelInstance;
+}
+
 class RiveArtboard;
 
 class RiveFile
@@ -61,6 +67,28 @@ public:
     // Instantiate an artboard. Empty name = default. Returns nullptr
     // if no artboard matches.
     std::unique_ptr<RiveArtboard> createArtboard(const QString& name) const;
+
+    // Access to the underlying rive::File (borrowed). Used by VM
+    // properties that need to resolve assets (e.g. artboard refs).
+    rive::File* raw() const;
+
+    // View model definitions baked into the file, in declaration order.
+    QStringList viewModelNames() const;
+    int viewModelCount() const;
+
+    // Build a fresh view-model instance:
+    //   - If `viewModelName` is empty: pick the VM attached to the
+    //     given artboard's editor binding (typical use — instance
+    //     follows the artboard).
+    //   - If `viewModelName` is set and `instanceName` empty: create a
+    //     fresh instance from the named VM definition.
+    //   - If both set: instantiate the editor-authored preset by name.
+    //
+    // Returns null rcp on miss.
+    rive::rcp<rive::ViewModelInstance> createViewModelInstance(
+        rive::ArtboardInstance* artboard,
+        const QString& viewModelName,
+        const QString& instanceName) const;
 
 private:
     RiveFile();

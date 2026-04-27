@@ -97,32 +97,34 @@ RiveTriggerInput* RiveStateMachine::getTrigger(const QString& name)
     return input;
 }
 
-RiveStateMachine::HitResult RiveStateMachine::pointerDown(const QPointF& pos)
+RiveStateMachine::HitResult RiveStateMachine::pointerDown(const QPointF& pos, int pointerId)
 {
     if (!m_sm)
         return HitResult::None;
-    return toHitResult(m_sm->pointerDown(toRive(pos)));
+    return toHitResult(m_sm->pointerDown(toRive(pos), pointerId));
 }
 
-RiveStateMachine::HitResult RiveStateMachine::pointerMove(const QPointF& pos)
+RiveStateMachine::HitResult RiveStateMachine::pointerMove(const QPointF& pos, int pointerId)
 {
     if (!m_sm)
         return HitResult::None;
-    return toHitResult(m_sm->pointerMove(toRive(pos)));
+    // pointerMove also accepts a timestamp; we leave it at default
+    // since rive doesn't require monotonic timestamps for hit testing.
+    return toHitResult(m_sm->pointerMove(toRive(pos), 0.0f, pointerId));
 }
 
-RiveStateMachine::HitResult RiveStateMachine::pointerUp(const QPointF& pos)
+RiveStateMachine::HitResult RiveStateMachine::pointerUp(const QPointF& pos, int pointerId)
 {
     if (!m_sm)
         return HitResult::None;
-    return toHitResult(m_sm->pointerUp(toRive(pos)));
+    return toHitResult(m_sm->pointerUp(toRive(pos), pointerId));
 }
 
-RiveStateMachine::HitResult RiveStateMachine::pointerExit(const QPointF& pos)
+RiveStateMachine::HitResult RiveStateMachine::pointerExit(const QPointF& pos, int pointerId)
 {
     if (!m_sm)
         return HitResult::None;
-    return toHitResult(m_sm->pointerExit(toRive(pos)));
+    return toHitResult(m_sm->pointerExit(toRive(pos), pointerId));
 }
 
 bool RiveStateMachine::advance(float deltaSeconds)
@@ -147,6 +149,13 @@ void RiveStateMachine::drainEvents()
         RiveEvent qe(QString::fromStdString(e->name()), report.secondsDelay());
         emit eventReported(qe);
     }
+}
+
+void RiveStateMachine::bindViewModelInstance(rive::rcp<rive::ViewModelInstance> instance)
+{
+    if (!m_sm || !instance)
+        return;
+    m_sm->bindViewModelInstance(std::move(instance));
 }
 
 void RiveStateMachine::drainStateChanges()

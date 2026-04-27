@@ -56,8 +56,14 @@ qt_add_qml_module(rive_qt
         src/rive/rive_input.h
         src/rive/rive_key_map.cpp
         src/rive/rive_key_map.h
+        src/rive/rive_qt_factory.cpp
+        src/rive/rive_qt_factory.h
         src/rive/rive_state_machine.cpp
         src/rive/rive_state_machine.h
+        src/rive/rive_view_model.cpp
+        src/rive/rive_view_model.h
+        src/rive/rive_vm_property.cpp
+        src/rive/rive_vm_property.h
         src/rive_view.cpp
         src/rive_view.h
 )
@@ -79,7 +85,10 @@ set_source_files_properties(
     src/rive/rive_file.cpp
     src/rive/rive_input.cpp
     src/rive/rive_key_map.cpp
+    src/rive/rive_qt_factory.cpp
     src/rive/rive_state_machine.cpp
+    src/rive/rive_view_model.cpp
+    src/rive/rive_vm_property.cpp
     src/rive_view.cpp
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
 )
@@ -102,6 +111,12 @@ target_include_directories(rive_qt
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src>
         $<INSTALL_INTERFACE:include/rive_qt>
+    PRIVATE
+        # Qt's auto-generated qml type registration file includes our
+        # headers by basename (`<rive_vm_property.h>`), so the rive/
+        # subdir must be searchable directly.
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/rive>
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/src/backends>
 )
 
 target_link_libraries(rive_qt

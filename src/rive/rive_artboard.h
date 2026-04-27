@@ -19,8 +19,11 @@
 
 #include <memory>
 
+#include <rive/refcnt.hpp>
+
 namespace rive {
 class ArtboardInstance;
+class ViewModelInstance;
 }
 
 class RiveStateMachine;
@@ -43,6 +46,15 @@ public:
     qreal width() const;
     qreal height() const;
     QSizeF size() const { return QSizeF(width(), height()); }
+
+    qreal originalWidth() const;
+    qreal originalHeight() const;
+
+    // Drive the artboard's layout system at runtime. Use for
+    // responsive layouts authored with rive's layout features —
+    // setting the artboard size triggers a re-layout.
+    void setSize(const QSizeF& size);
+    void resetSize();
 
     // State machines defined on this artboard, in declaration order.
     QStringList stateMachineNames() const;
@@ -68,6 +80,10 @@ public:
     bool focusRight();
     bool focusUp();
     bool focusDown();
+
+    // Bind a view-model instance — drives any data-bound properties
+    // authored in the editor against this artboard.
+    void bindViewModelInstance(rive::rcp<rive::ViewModelInstance> instance);
 
 private:
     std::unique_ptr<rive::ArtboardInstance> m_artboard;

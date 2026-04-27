@@ -23,8 +23,11 @@
 
 #include <memory>
 
+#include <rive/refcnt.hpp>
+
 namespace rive {
 class StateMachineInstance;
+class ViewModelInstance;
 }
 
 class RiveStateMachine : public QObject
@@ -64,15 +67,22 @@ public:
     // forwarder uses. HitResult tells the caller whether the event
     // landed on a listener (Hit) or a modal/opaque listener (HitOpaque
     // — don't propagate further).
-    Q_INVOKABLE HitResult pointerDown(const QPointF& pos);
-    Q_INVOKABLE HitResult pointerMove(const QPointF& pos);
-    Q_INVOKABLE HitResult pointerUp(const QPointF& pos);
-    Q_INVOKABLE HitResult pointerExit(const QPointF& pos);
+    // Pointer ID lets multiple concurrent touches stay distinct.
+    // Defaults to 0 so single-mouse callers don't have to think
+    // about it.
+    Q_INVOKABLE HitResult pointerDown(const QPointF& pos, int pointerId = 0);
+    Q_INVOKABLE HitResult pointerMove(const QPointF& pos, int pointerId = 0);
+    Q_INVOKABLE HitResult pointerUp(const QPointF& pos, int pointerId = 0);
+    Q_INVOKABLE HitResult pointerExit(const QPointF& pos, int pointerId = 0);
 
     // Framework-only: step the machine. Returns true if the SM reports
     // more work pending (keep requesting frames). Emits eventReported
     // + stateChanged for anything raised during the step.
     bool advance(float deltaSeconds);
+
+    // Bind a view-model instance — drives any data-bound transitions
+    // authored in the editor against this state machine.
+    void bindViewModelInstance(rive::rcp<rive::ViewModelInstance> instance);
 
 signals:
     void eventReported(const RiveEvent& event);

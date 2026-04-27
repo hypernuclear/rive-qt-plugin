@@ -11,6 +11,7 @@
 #include <QMouseEvent>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
+#include <QTouchEvent>
 
 #include <cmath>
 
@@ -58,6 +59,7 @@ RiveView::RiveView(QQuickItem* parent) : QQuickItem(parent)
     setFlag(ItemHasContents, true);
     setAcceptedMouseButtons(Qt::LeftButton | Qt::RightButton | Qt::MiddleButton);
     setAcceptHoverEvents(true);
+    setAcceptTouchEvents(true);
     // Accept keyboard focus so rive's FocusManager receives key events
     // when the user clicks / tabs into the view.
     setFlag(ItemAcceptsInputMethod, true);
@@ -141,6 +143,48 @@ QStringList RiveView::stateMachineNames() const
     return m_artboard ? m_artboard->stateMachineNames() : QStringList{};
 }
 
+QStringList RiveView::viewModelNames() const
+{
+    return m_file ? m_file->viewModelNames() : QStringList{};
+}
+
+void RiveView::setViewModelName(const QString& name)
+{
+    if (m_viewModelName == name)
+        return;
+    m_viewModelName = name;
+    emit viewModelNameChanged();
+    m_loadRequested = true;
+    update();
+}
+
+void RiveView::setViewModelInstanceName(const QString& name)
+{
+    if (m_viewModelInstanceName == name)
+        return;
+    m_viewModelInstanceName = name;
+    emit viewModelInstanceNameChanged();
+    m_loadRequested = true;
+    update();
+}
+
+void RiveView::setLayoutSize(const QSizeF& size)
+{
+    if (m_layoutSize == size)
+        return;
+    m_layoutSize = size;
+    emit layoutSizeChanged();
+    if (m_artboard)
+    {
+        if (size.isValid())
+            m_artboard->setSize(size);
+        else
+            m_artboard->resetSize();
+        m_settled = false;
+    }
+    update();
+}
+
 void RiveView::requestLoad()
 {
     m_loadRequested = true;
@@ -178,8 +222,18 @@ void RiveView::onSceneGraphInvalidated()
     if (m_stateMachine)
         m_stateMachine->disconnect(this);
     m_stateMachine = nullptr;
+    if (m_viewModel)
+    {
+        m_viewModel.reset();
+        emit viewModelChanged();
+    }
     m_artboard.reset();
     m_file.reset();
+    m_loadedUrl.clear();
+    m_loadedArtboardName.clear();
+    m_loadedStateMachineName.clear();
+    m_loadedViewModelName.clear();
+    m_loadedViewModelInstanceName.clear();
     m_loadRequested = !m_source.isEmpty();
     m_settled = false;
 }
@@ -204,8 +258,71 @@ void RiveView::rebuildArtboard()
         emit stateMachineNamesChanged();
         return;
     }
+    if (m_layoutSize.isValid())
+        m_artboard->setSize(m_layoutSize);
     emit stateMachineNamesChanged();
     rebuildStateMachine();
+    rebuildViewModel();
+}
+
+void RiveView::rebuildViewModel()
+{
+    if (m_viewModel)
+    {
+        m_viewModel.reset();
+        emit viewModelChanged();
+    }
+    if (!m_file || !m_artboard || !m_artboard->raw())
+        return;
+
+    qCInfo(lcRiveView) << "rebuildViewModel: file VMs =" << m_file->viewModelNames()
+                       << "requested vm =" << m_viewModelName
+                       << "instance =" << m_viewModelInstanceName;
+
+    rive::rcp<rive::ViewModelInstance> instance = m_file->createViewModelInstance(
+        m_artboard->raw(), m_viewModelName, m_viewModelInstanceName);
+    if (!instance)
+    {
+        qCInfo(lcRiveView) << "rebuildViewModel: createViewModelInstance returned null";
+        return;
+    }
+
+    // Bind to both artboard and SM so transitions and visual bindings
+    // see the same instance.
+    m_artboard->bindViewModelInstance(instance);
+    if (m_stateMachine)
+        m_stateMachine->bindViewModelInstance(instance);
+
+    // Construct the wrapper with factory + file so image / artboard-
+    // ref typed properties can decode and resolve. m_file is our
+    // shared_ptr<RiveFile>; the underlying rive::File pointer is
+    // accessed via the RiveFile member.
+    m_viewModel = std::make_unique<RiveViewModelInstance>(
+        std::move(instance), m_backend->factory(), m_file ? m_file->raw() : nullptr);
+    // We construct on the render thread (during updatePaintNode), but
+    // QML talks to the VM from the GUI thread — typed property
+    // accessors create child QObjects, which Qt forbids across
+    // threads. Move thread affinity to RiveView's (GUI) thread before
+    // anyone observes us. moveToThread on a freshly-constructed
+    // QObject with no pending events is the supported pattern.
+    m_viewModel->moveToThread(this->thread());
+
+    // Wake the advance loop whenever a VM property is mutated. A
+    // settled state machine otherwise won't re-process data bindings,
+    // so a slider tweak from QML wouldn't update the artboard.
+    // QueuedConnection because the signal originates on the GUI thread
+    // (QML setter) but `m_settled` / update() must be marshaled into
+    // the next render-thread tick safely.
+    connect(m_viewModel.get(), &RiveViewModelInstance::propertyMutated,
+            this, [this]() {
+                m_settled = false;
+                update();
+            });
+
+    qCInfo(lcRiveView) << "rebuildViewModel: bound VM with"
+                       << m_viewModel->propertyNames().size() << "properties:"
+                       << m_viewModel->propertyNames();
+    emit viewModelChanged();
 }
 
 void RiveView::rebuildStateMachine()
@@ -246,9 +363,17 @@ void RiveView::tryLoad()
             m_file.reset();
             m_loadedArtboardName.clear();
             m_loadedStateMachineName.clear();
+            m_loadedViewModelName.clear();
+            m_loadedViewModelInstanceName.clear();
             m_stateMachine = nullptr;
+            if (m_viewModel)
+            {
+                m_viewModel.reset();
+                emit viewModelChanged();
+            }
             m_artboard.reset();
             emit artboardNamesChanged();
+            emit viewModelNamesChanged();
             return;
         }
 
@@ -266,6 +391,7 @@ void RiveView::tryLoad()
         }
         m_file = std::move(file);
         emit artboardNamesChanged();
+        emit viewModelNamesChanged();
         // Force artboard + SM rebuild below by mismatching the names.
         m_loadedArtboardName = QStringLiteral("\x01__force_rebuild__");
     }
@@ -289,6 +415,21 @@ void RiveView::tryLoad()
     {
         m_loadedStateMachineName = m_stateMachineName;
         rebuildStateMachine();
+        // SM swap re-binds the VM instance through the new SM so its
+        // transition guards see the same data.
+        if (m_viewModel && m_stateMachine)
+            m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+        m_settled = false;
+    }
+
+    // View-model name / preset change: rebuild only the VM, leave
+    // artboard + SM alone.
+    if (m_loadedViewModelName != m_viewModelName ||
+        m_loadedViewModelInstanceName != m_viewModelInstanceName)
+    {
+        m_loadedViewModelName = m_viewModelName;
+        m_loadedViewModelInstanceName = m_viewModelInstanceName;
+        rebuildViewModel();
         m_settled = false;
     }
 }
@@ -308,18 +449,22 @@ QPointF RiveView::mapToArtboard(const QPointF& localPos) const
     return QPointF(out.x, out.y);
 }
 
-void RiveView::dispatchPointer(QEvent::Type type, const QPointF& localPos)
+void RiveView::dispatchPointer(QEvent::Type type, const QPointF& localPos, int pointerId)
 {
     if (!m_stateMachine)
         return;
     const QPointF ab = mapToArtboard(localPos);
     switch (type)
     {
-    case QEvent::MouseButtonPress:   m_stateMachine->pointerDown(ab); break;
+    case QEvent::MouseButtonPress:
+    case QEvent::TouchBegin:         m_stateMachine->pointerDown(ab, pointerId); break;
     case QEvent::MouseMove:
-    case QEvent::HoverMove:          m_stateMachine->pointerMove(ab); break;
-    case QEvent::MouseButtonRelease: m_stateMachine->pointerUp(ab); break;
-    case QEvent::HoverLeave:         m_stateMachine->pointerExit(ab); break;
+    case QEvent::HoverMove:
+    case QEvent::TouchUpdate:        m_stateMachine->pointerMove(ab, pointerId); break;
+    case QEvent::MouseButtonRelease:
+    case QEvent::TouchEnd:           m_stateMachine->pointerUp(ab, pointerId); break;
+    case QEvent::HoverLeave:
+    case QEvent::TouchCancel:        m_stateMachine->pointerExit(ab, pointerId); break;
     default: break;
     }
 }
@@ -331,7 +476,8 @@ void RiveView::mousePressEvent(QMouseEvent* event)
         // Click grabs keyboard focus so subsequent key events reach
         // rive's FocusManager via our keyPressEvent override.
         forceActiveFocus();
-        dispatchPointer(QEvent::MouseButtonPress, event->position());
+        dispatchPointer(QEvent::MouseButtonPress, event->position(),
+                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
         event->accept();
         return;
     }
@@ -342,7 +488,8 @@ void RiveView::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
-        dispatchPointer(QEvent::MouseMove, event->position());
+        dispatchPointer(QEvent::MouseMove, event->position(),
+                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
         event->accept();
         return;
     }
@@ -353,7 +500,8 @@ void RiveView::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
-        dispatchPointer(QEvent::MouseButtonRelease, event->position());
+        dispatchPointer(QEvent::MouseButtonRelease, event->position(),
+                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
         event->accept();
         return;
     }
@@ -372,6 +520,39 @@ void RiveView::hoverLeaveEvent(QHoverEvent* event)
     if (m_inputForwarding)
         dispatchPointer(QEvent::HoverLeave, event->position());
     QQuickItem::hoverLeaveEvent(event);
+}
+
+void RiveView::touchEvent(QTouchEvent* event)
+{
+    if (!m_inputForwarding)
+    {
+        QQuickItem::touchEvent(event);
+        return;
+    }
+    // One state-machine pointer per touch point. Each QEventPoint
+    // carries a stable id() that persists across the touch's
+    // lifetime, which is exactly what rive expects in pointerId.
+    bool consumed = false;
+    for (const QEventPoint& p : event->points())
+    {
+        QEvent::Type t = QEvent::None;
+        switch (p.state())
+        {
+        case QEventPoint::Pressed:    t = QEvent::TouchBegin; break;
+        case QEventPoint::Updated:    t = QEvent::TouchUpdate; break;
+        case QEventPoint::Released:   t = QEvent::TouchEnd; break;
+        case QEventPoint::Stationary: continue; // nothing to forward
+        case QEventPoint::Unknown:    continue;
+        }
+        if (t == QEvent::TouchBegin)
+            forceActiveFocus();
+        dispatchPointer(t, p.position(), p.id());
+        consumed = true;
+    }
+    if (consumed)
+        event->accept();
+    else
+        QQuickItem::touchEvent(event);
 }
 
 void RiveView::keyPressEvent(QKeyEvent* event)
@@ -514,6 +695,11 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             needsMore = m_stateMachine->advance(delta);
         else if (m_artboard->raw())
             needsMore = m_artboard->raw()->advance(delta);
+        // After the SM has stepped (and possibly mutated the VM via
+        // data-bind), tick the VM so its delegates fire and our typed
+        // property wrappers can poll for changes.
+        if (m_viewModel)
+            m_viewModel->advance();
         if (!needsMore)
             m_settled = true;
     }
