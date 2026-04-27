@@ -77,6 +77,24 @@ if(APPLE)
     )
 endif()
 
+# D3D11 backend — Windows only.
+if(WIN32)
+    target_sources(rive_qt PRIVATE
+        src/backends/d3d11/rive_d3d11_backend.h
+        src/backends/d3d11/rive_d3d11_backend.cpp
+    )
+    # NOMINMAX so windows.h's min/max function-like macros don't tokenize
+    # std::min / std::max in Rive's headers (TUs that pull in d3d11.h see
+    # windows.h transitively). WIN32_LEAN_AND_MEAN trims the rest of the
+    # SDK macro surface for speed + collision avoidance. Target-wide
+    # because anything reaching for the D3D backend's headers transitively
+    # gets windows.h.
+    target_compile_definitions(rive_qt PRIVATE
+        NOMINMAX
+        WIN32_LEAN_AND_MEAN
+    )
+endif()
+
 # Rive is built with RTTI off (see rive_build_config.lua — "nonstandard for
 # Rive"). Every TU that touches rive types must match or the linker demands
 # typeinfo symbols rive never emitted. Per-file so host projects don't
@@ -93,6 +111,15 @@ set_source_files_properties(
     src/rive_view.cpp
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
 )
+
+# D3D11 backend touches rive types (RenderContextD3DImpl, RenderTargetD3D);
+# match Rive's RTTI-off ABI same as the rive/ wrappers above.
+if(WIN32)
+    set_source_files_properties(
+        src/backends/d3d11/rive_d3d11_backend.cpp
+        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
+    )
+endif()
 
 # The Metal backend .mm uses ARC for its id<MTL...> members.
 if(APPLE)

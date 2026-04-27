@@ -35,6 +35,17 @@ ApplicationWindow {
         sortField: FolderListModel.Name
     }
 
+    // Local path → file URL. Windows local paths start with a drive
+    // letter ("C:/..."); the valid file URL form is file:///C:/...,
+    // NOT file://C:/... (the latter is parsed as host="C:" and
+    // triggers a UNC server lookup). On Unix an absolute path starts
+    // with "/", so two slashes is already correct.
+    function localPathToFileUrl(path) {
+        if (path.length >= 2 && path[1] === ":")
+            return "file:///" + path;
+        return "file://" + path;
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
@@ -57,7 +68,7 @@ ApplicationWindow {
                 valueRole: "filePath"
                 model: samplesModel
                 onActivated: {
-                    rive.source = "file://" + currentValue
+                    rive.source = localPathToFileUrl(currentValue)
                     artboardSelector.currentIndex = 0
                     stateMachineSelector.currentIndex = 0
                     viewModelSelector.currentIndex = 0
@@ -770,7 +781,8 @@ ApplicationWindow {
                     if (idx >= 0) { pickedIdx = idx; break; }
                 }
                 sampleSelector.currentIndex = pickedIdx;
-                rive.source = "file://" + samplesModel.get(pickedIdx, "filePath");
+                rive.source = localPathToFileUrl(
+                    samplesModel.get(pickedIdx, "filePath"));
             }
         }
     }

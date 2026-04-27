@@ -12,7 +12,23 @@ RiveArtboard::RiveArtboard(std::unique_ptr<rive::ArtboardInstance> instance,
     : QObject(parent), m_artboard(std::move(instance)), m_name(std::move(name))
 {}
 
-RiveArtboard::~RiveArtboard() = default;
+RiveArtboard::~RiveArtboard()
+{
+    // rive::StateMachineInstance::~StateMachineInstance calls back into
+    // its rive::Artboard (Artboard::cleanupFocusTree). Our SMIs live
+    // inside RiveStateMachine wrappers that we made QObject children
+    // of this RiveArtboard. Default destruction order would tear down
+    // m_artboard first (member dtor), then run ~QObject which deletes
+    // child wrappers — SMI dtors then dereference a freed Artboard.
+    //
+    // Tear down children explicitly here so they observe m_artboard
+    // still live; m_artboard auto-destructs after this body returns.
+    //
+    // Latent everywhere — macOS / Windows release silently UB; Windows
+    // debug crashes in std::vector iterator adoption (_Container_proxy*
+    // dangling) when cleanupFocusTree iterates the Artboard's m_Objects.
+    qDeleteAll(findChildren<QObject*>(Qt::FindDirectChildrenOnly));
+}
 
 qreal RiveArtboard::width() const
 {

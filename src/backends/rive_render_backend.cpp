@@ -17,6 +17,10 @@
 #include "metal/rive_metal_backend.h"
 #endif
 
+#if defined(_WIN32) && !defined(__APPLE__)
+#include "d3d11/rive_d3d11_backend.h"
+#endif
+
 std::unique_ptr<RiveRenderBackend>
 RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
 {
@@ -39,6 +43,14 @@ RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
 #if defined(__APPLE__)
     case QSGRendererInterface::Metal:
         return std::make_unique<RiveMetalBackend>();
+#endif
+#if defined(_WIN32) && !defined(__APPLE__)
+    case QSGRendererInterface::Direct3D11:
+        return std::make_unique<RiveD3D11Backend>();
+    // Direct3D12 falls through to default — D3D12 backend is a follow-up.
+    // Users who set QSG_RHI_BACKEND=d3d12 will see the "no backend" error
+    // rather than a crash; switching back to the default RHI restores
+    // rendering.
 #endif
     default:
         if (errorOut)
