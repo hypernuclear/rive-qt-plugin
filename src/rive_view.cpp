@@ -30,26 +30,69 @@ RiveRenderBackend::FitMode toBackendFit(RiveView::Fit f)
 {
     switch (f)
     {
+    case RiveView::Fit::Fill:      return RiveRenderBackend::FitMode::Fill;
     case RiveView::Fit::Contain:   return RiveRenderBackend::FitMode::Contain;
     case RiveView::Fit::Cover:     return RiveRenderBackend::FitMode::Cover;
-    case RiveView::Fit::Fill:      return RiveRenderBackend::FitMode::Fill;
+    case RiveView::Fit::FitWidth:  return RiveRenderBackend::FitMode::FitWidth;
+    case RiveView::Fit::FitHeight: return RiveRenderBackend::FitMode::FitHeight;
     case RiveView::Fit::None:      return RiveRenderBackend::FitMode::None;
     case RiveView::Fit::ScaleDown: return RiveRenderBackend::FitMode::ScaleDown;
+    case RiveView::Fit::Layout:    return RiveRenderBackend::FitMode::Layout;
     }
     return RiveRenderBackend::FitMode::Contain;
+}
+
+RiveRenderBackend::AlignmentMode toBackendAlignment(RiveView::Alignment a)
+{
+    switch (a)
+    {
+    case RiveView::Alignment::TopLeft:      return RiveRenderBackend::AlignmentMode::TopLeft;
+    case RiveView::Alignment::TopCenter:    return RiveRenderBackend::AlignmentMode::TopCenter;
+    case RiveView::Alignment::TopRight:     return RiveRenderBackend::AlignmentMode::TopRight;
+    case RiveView::Alignment::CenterLeft:   return RiveRenderBackend::AlignmentMode::CenterLeft;
+    case RiveView::Alignment::Center:       return RiveRenderBackend::AlignmentMode::Center;
+    case RiveView::Alignment::CenterRight:  return RiveRenderBackend::AlignmentMode::CenterRight;
+    case RiveView::Alignment::BottomLeft:   return RiveRenderBackend::AlignmentMode::BottomLeft;
+    case RiveView::Alignment::BottomCenter: return RiveRenderBackend::AlignmentMode::BottomCenter;
+    case RiveView::Alignment::BottomRight:  return RiveRenderBackend::AlignmentMode::BottomRight;
+    }
+    return RiveRenderBackend::AlignmentMode::Center;
 }
 
 rive::Fit toRiveFit(RiveView::Fit f)
 {
     switch (f)
     {
+    case RiveView::Fit::Fill:      return rive::Fit::fill;
     case RiveView::Fit::Contain:   return rive::Fit::contain;
     case RiveView::Fit::Cover:     return rive::Fit::cover;
-    case RiveView::Fit::Fill:      return rive::Fit::fill;
+    case RiveView::Fit::FitWidth:  return rive::Fit::fitWidth;
+    case RiveView::Fit::FitHeight: return rive::Fit::fitHeight;
     case RiveView::Fit::None:      return rive::Fit::none;
     case RiveView::Fit::ScaleDown: return rive::Fit::scaleDown;
+    case RiveView::Fit::Layout:    return rive::Fit::layout;
     }
     return rive::Fit::contain;
+}
+
+// Mirror of toBackendAlignment for the GUI-thread mapToArtboard path.
+// Kept separate from the backend mapping so this TU doesn't need to
+// include rive_render_backend_helpers.h.
+rive::Alignment toRiveAlignment(RiveView::Alignment a)
+{
+    switch (a)
+    {
+    case RiveView::Alignment::TopLeft:      return rive::Alignment::topLeft;
+    case RiveView::Alignment::TopCenter:    return rive::Alignment::topCenter;
+    case RiveView::Alignment::TopRight:     return rive::Alignment::topRight;
+    case RiveView::Alignment::CenterLeft:   return rive::Alignment::centerLeft;
+    case RiveView::Alignment::Center:       return rive::Alignment::center;
+    case RiveView::Alignment::CenterRight:  return rive::Alignment::centerRight;
+    case RiveView::Alignment::BottomLeft:   return rive::Alignment::bottomLeft;
+    case RiveView::Alignment::BottomCenter: return rive::Alignment::bottomCenter;
+    case RiveView::Alignment::BottomRight:  return rive::Alignment::bottomRight;
+    }
+    return rive::Alignment::center;
 }
 
 } // namespace
@@ -107,6 +150,15 @@ void RiveView::setFit(Fit f)
         return;
     m_fit = f;
     emit fitChanged();
+    update();
+}
+
+void RiveView::setAlignment(Alignment a)
+{
+    if (m_alignment == a)
+        return;
+    m_alignment = a;
+    emit alignmentChanged();
     update();
 }
 
@@ -490,7 +542,7 @@ QPointF RiveView::mapToArtboard(const QPointF& localPos) const
     const rive::AABB frame(0.0f, 0.0f, static_cast<float>(width()),
                            static_cast<float>(height()));
     const rive::Mat2D forward = rive::computeAlignment(
-        toRiveFit(m_fit), rive::Alignment::center, frame,
+        toRiveFit(m_fit), toRiveAlignment(m_alignment), frame,
         m_artboard->raw()->bounds());
     const rive::Mat2D inverse = forward.invertOrIdentity();
     const rive::Vec2D out = inverse * rive::Vec2D(static_cast<float>(localPos.x()),
@@ -784,7 +836,8 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             ? QSGSimpleTextureNode::MirrorVertically
             : QSGSimpleTextureNode::NoTransform);
 
-    m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_fit));
+    m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_fit),
+                           toBackendAlignment(m_alignment));
 
     if (m_playing && !m_settled)
         update();

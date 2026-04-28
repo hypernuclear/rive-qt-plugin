@@ -26,6 +26,7 @@
 
 #include "rive_d3d11_backend.h"
 
+#include "../rive_render_backend_helpers.h"
 #include "../../rive/rive_qt_factory.h"
 
 #include <QLoggingCategory>
@@ -50,19 +51,6 @@
 Q_LOGGING_CATEGORY(lcRiveD3D11Backend, "rive.d3d11.backend")
 
 namespace {
-
-rive::Fit toRiveFit(RiveRenderBackend::FitMode f)
-{
-    switch (f)
-    {
-    case RiveRenderBackend::FitMode::Contain:   return rive::Fit::contain;
-    case RiveRenderBackend::FitMode::Cover:     return rive::Fit::cover;
-    case RiveRenderBackend::FitMode::Fill:      return rive::Fit::fill;
-    case RiveRenderBackend::FitMode::None:      return rive::Fit::none;
-    case RiveRenderBackend::FitMode::ScaleDown: return rive::Fit::scaleDown;
-    }
-    return rive::Fit::contain;
-}
 
 class TextureCleanupJob final : public QRunnable
 {
@@ -319,7 +307,7 @@ QSGTexture* RiveD3D11Backend::ensureTexture(const QSize& pixelSize)
 }
 
 void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
-                                   FitMode fit)
+                                   FitMode fit, AlignmentMode alignment)
 {
     if (!artboard || !m_impl->renderContext || !m_impl->renderTarget ||
         !m_impl->targetTexture)
@@ -340,8 +328,9 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
 
     const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
                            static_cast<float>(h));
-    renderer.align(toRiveFit(fit), rive::Alignment::center, frame,
-                   artboard->bounds());
+    renderer.align(rive_qt::toRiveFit(fit),
+                   rive_qt::toRiveAlignment(alignment),
+                   frame, artboard->bounds());
     artboard->draw(&renderer);
     renderer.restore();
 

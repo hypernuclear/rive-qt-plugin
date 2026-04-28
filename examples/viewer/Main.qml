@@ -289,6 +289,40 @@ ApplicationWindow {
                         ColumnLayout {
                             spacing: 8
 
+                            // Fit selector — drives how the artboard is
+                            // scaled into the RiveView's bounds. The
+                            // `Layout` mode hands all sizing to rive's
+                            // responsive layout system; pair it with
+                            // an explicit layoutSize override below.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("Fit:"); color: "#ddd" }
+                                ComboBox {
+                                    Layout.fillWidth: true
+                                    model: ["Fill", "Contain", "Cover",
+                                            "FitWidth", "FitHeight",
+                                            "None", "ScaleDown", "Layout"]
+                                    currentIndex: rive.fit
+                                    onActivated: rive.fit = currentIndex
+                                }
+                            }
+
+                            // Alignment selector — anchor point inside
+                            // the RiveView for fit modes that don't
+                            // fill the entire bounds.
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Label { text: qsTr("Align:"); color: "#ddd" }
+                                ComboBox {
+                                    Layout.fillWidth: true
+                                    model: ["TopLeft", "TopCenter", "TopRight",
+                                            "CenterLeft", "Center", "CenterRight",
+                                            "BottomLeft", "BottomCenter", "BottomRight"]
+                                    currentIndex: rive.alignment
+                                    onActivated: rive.alignment = currentIndex
+                                }
+                            }
+
                             CheckBox {
                                 id: layoutOverrideEnable
                                 text: qsTr("Override artboard layout size")

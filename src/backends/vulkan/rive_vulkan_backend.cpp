@@ -37,6 +37,7 @@
 
 #include "rive_vulkan_backend.h"
 
+#include "../rive_render_backend_helpers.h"
 #include "../../rive/rive_qt_factory.h"
 
 #include <QLoggingCategory>
@@ -75,19 +76,6 @@ constexpr VkImageUsageFlags kTargetUsageFlags =
     VK_IMAGE_USAGE_STORAGE_BIT |
     VK_IMAGE_USAGE_INPUT_ATTACHMENT_BIT |  // PLS subpass-load reads.
     VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
-
-rive::Fit toRiveFit(RiveRenderBackend::FitMode f)
-{
-    switch (f)
-    {
-    case RiveRenderBackend::FitMode::Contain:   return rive::Fit::contain;
-    case RiveRenderBackend::FitMode::Cover:     return rive::Fit::cover;
-    case RiveRenderBackend::FitMode::Fill:      return rive::Fit::fill;
-    case RiveRenderBackend::FitMode::None:      return rive::Fit::none;
-    case RiveRenderBackend::FitMode::ScaleDown: return rive::Fit::scaleDown;
-    }
-    return rive::Fit::contain;
-}
 
 class TextureCleanupJob final : public QRunnable
 {
@@ -492,7 +480,7 @@ QSGTexture* RiveVulkanBackend::ensureTexture(const QSize& pixelSize)
 }
 
 void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
-                                    FitMode fit)
+                                    FitMode fit, AlignmentMode alignment)
 {
     if (!artboard || !m_impl->renderContext || !m_impl->renderTarget ||
         !m_impl->targetImage || !m_impl->targetImageView)
@@ -533,8 +521,9 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
 
     const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
                            static_cast<float>(h));
-    renderer.align(toRiveFit(fit), rive::Alignment::center, frame,
-                   artboard->bounds());
+    renderer.align(rive_qt::toRiveFit(fit),
+                   rive_qt::toRiveAlignment(alignment),
+                   frame, artboard->bounds());
     artboard->draw(&renderer);
     renderer.restore();
 

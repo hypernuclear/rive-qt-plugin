@@ -81,17 +81,41 @@ class RiveView : public QQuickItem
     // artwork authored with rive's layout system.
     Q_PROPERTY(QSizeF layoutSize READ layoutSize WRITE setLayoutSize
                    NOTIFY layoutSizeChanged)
+    Q_PROPERTY(Alignment alignment READ alignment WRITE setAlignment
+                   NOTIFY alignmentChanged)
 
 public:
+    // Mirrors rive::Fit. `Layout` defers entirely to Rive's responsive
+    // layout system — pair with `layoutSize` to drive the artboard's
+    // runtime width/height directly.
     enum class Fit
     {
+        Fill,
         Contain,
         Cover,
-        Fill,
+        FitWidth,
+        FitHeight,
         None,
-        ScaleDown
+        ScaleDown,
+        Layout
     };
     Q_ENUM(Fit)
+
+    // 9 named alignment positions matching rive's Alignment statics.
+    // Default Center preserves the historic behavior.
+    enum class Alignment
+    {
+        TopLeft,
+        TopCenter,
+        TopRight,
+        CenterLeft,
+        Center,
+        CenterRight,
+        BottomLeft,
+        BottomCenter,
+        BottomRight
+    };
+    Q_ENUM(Alignment)
 
     explicit RiveView(QQuickItem* parent = nullptr);
     ~RiveView() override;
@@ -139,6 +163,9 @@ public:
     QSizeF layoutSize() const { return m_layoutSize; }
     void setLayoutSize(const QSizeF& size);
 
+    Alignment alignment() const { return m_alignment; }
+    void setAlignment(Alignment a);
+
     // Active state machine for QML binding. Returns nullptr before load
     // completes or if the named SM doesn't exist. The pointer is stable
     // until the SM is swapped (new artboard or stateMachineName).
@@ -163,6 +190,7 @@ signals:
     void viewModelChanged();
     void stateMachineChanged();
     void layoutSizeChanged();
+    void alignmentChanged();
 
     void loadFailed(const QString& reason);
     void stateMachineStateChanged(const QString& layerName, const QString& stateName);
@@ -198,6 +226,7 @@ private:
     QString m_viewModelInstanceName; // "" = blank instance / default preset
     QSizeF m_layoutSize;             // invalid = use design-time size
     Fit m_fit = Fit::Contain;
+    Alignment m_alignment = Alignment::Center;
     bool m_playing = true;
     bool m_inputForwarding = true;
     bool m_autoBindViewModel = true;

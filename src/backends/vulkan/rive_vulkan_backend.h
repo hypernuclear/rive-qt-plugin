@@ -21,7 +21,8 @@ public:
     bool isInitialized() const override;
     rive::Factory* factory() const override;
     QSGTexture* ensureTexture(const QSize& pixelSize) override;
-    void renderFrame(rive::ArtboardInstance* artboard, FitMode fit) override;
+    void renderFrame(rive::ArtboardInstance* artboard, FitMode fit,
+                     AlignmentMode alignment) override;
     void abandonGraphicsResources() override;
     // Vulkan textures are sampled top-left like D3D/Metal — no flip.
     bool textureOriginIsBottomLeft() const override { return false; }

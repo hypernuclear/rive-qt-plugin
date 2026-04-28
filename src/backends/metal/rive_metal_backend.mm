@@ -36,22 +36,11 @@
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>
 
+#include "../rive_render_backend_helpers.h"
+
 Q_LOGGING_CATEGORY(lcRiveMetalBackend, "rive.metal.backend")
 
 namespace {
-
-rive::Fit toRiveFit(RiveRenderBackend::FitMode f)
-{
-    switch (f)
-    {
-    case RiveRenderBackend::FitMode::Contain:   return rive::Fit::contain;
-    case RiveRenderBackend::FitMode::Cover:     return rive::Fit::cover;
-    case RiveRenderBackend::FitMode::Fill:      return rive::Fit::fill;
-    case RiveRenderBackend::FitMode::None:      return rive::Fit::none;
-    case RiveRenderBackend::FitMode::ScaleDown: return rive::Fit::scaleDown;
-    }
-    return rive::Fit::contain;
-}
 
 // Scheduled at AfterSwapStage so the compositor is guaranteed done with
 // the QSGTexture before we delete it. Deleting the QSGPlainTexture
@@ -272,7 +261,8 @@ QSGTexture* RiveMetalBackend::ensureTexture(const QSize& pixelSize)
     return m_impl->qsgTexture;
 }
 
-void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit)
+void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit,
+                                   AlignmentMode alignment)
 {
     if (!artboard || !m_impl->renderContext || !m_impl->renderTarget ||
         !m_impl->targetTexture)
@@ -295,8 +285,9 @@ void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit
 
         const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
                                static_cast<float>(h));
-        renderer.align(toRiveFit(fit), rive::Alignment::center, frame,
-                       artboard->bounds());
+        renderer.align(rive_qt::toRiveFit(fit),
+                       rive_qt::toRiveAlignment(alignment),
+                       frame, artboard->bounds());
         artboard->draw(&renderer);
         renderer.restore();
 

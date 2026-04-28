@@ -39,11 +39,31 @@ class RiveRenderBackend
 public:
     enum class FitMode
     {
+        Fill,
         Contain,
         Cover,
-        Fill,
+        FitWidth,
+        FitHeight,
         None,
-        ScaleDown
+        ScaleDown,
+        // Defer to Rive's responsive layout system entirely — the
+        // renderer applies no scaling. Pair with `layoutSize` on
+        // RiveView to drive the artboard's runtime width/height.
+        Layout
+    };
+
+    // 9 named alignment positions matching rive::Alignment statics.
+    enum class AlignmentMode
+    {
+        TopLeft,
+        TopCenter,
+        TopRight,
+        CenterLeft,
+        Center,
+        CenterRight,
+        BottomLeft,
+        BottomCenter,
+        BottomRight
     };
 
     virtual ~RiveRenderBackend() = default;
@@ -71,9 +91,11 @@ public:
 
     // Encode a frame for `artboard` into the texture most recently
     // returned by ensureTexture(). No-op if artboard is null or the
-    // texture isn't ready. `fit` controls how the artboard is aligned
-    // within the render target.
-    virtual void renderFrame(rive::ArtboardInstance* artboard, FitMode fit) = 0;
+    // texture isn't ready. `fit` controls how the artboard is scaled,
+    // `alignment` where it's anchored within the render target.
+    virtual void renderFrame(rive::ArtboardInstance* artboard,
+                             FitMode fit,
+                             AlignmentMode alignment) = 0;
 
     // Drop references to RHI-bound resources WITHOUT deleting them.
     // Call from sceneGraphInvalidated so we don't touch the QRhi after
