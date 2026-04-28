@@ -5,27 +5,23 @@
 //
 // One of these is created per (artboard, SM name) pair, and lives under
 // the RiveArtboard. Exposed to QML so user code can:
-//   - access inputs as typed sub-objects: getBool/getNumber/getTrigger(name)
 //   - inject pointer events (forwarded by RiveView by default, or manual)
 //   - react to state transitions
+//   - bind a view-model instance that drives transition guards
 //
 // `advance()` is NOT Q_INVOKABLE — RiveView drives frame stepping. Every
-// frame it also queries `stateChangedByIndex` into stateChanged signals.
+// frame it queries `stateChangedByIndex` into stateChanged signals.
 //
-// The legacy Rive Events system (runtime → host signals) is intentionally
-// not wrapped — Rive itself has deprecated it in favor of Data Binding.
-// For runtime → host notifications, use VM trigger properties via
-// RiveViewModelInstance::trigger(name) and the typed wrapper's
-// `triggered()` signal.
+// What's intentionally NOT here:
+//   - Legacy SM Inputs (Boolean / Number / Trigger). Rive deprecated them
+//     in favor of Data Binding. Use RiveViewModelInstance::number /
+//     boolean / trigger / etc. on the bound view model instead.
+//   - Legacy Rive Events (runtime → host signals). Same story — use VM
+//     trigger properties' `triggered()` signal for runtime → host
+//     notifications.
 
-#include "rive_input.h"
-
-#include <QHash>
 #include <QObject>
 #include <QPointF>
-#include <QPointer>
-#include <QQmlPropertyMap>
-#include <QStringList>
 
 #include <memory>
 
@@ -40,13 +36,6 @@ class RiveStateMachine : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString name READ name CONSTANT)
-    // Dynamic name → value bag for state-machine inputs. Eager-populated
-    // at construction so QML can `Object.keys(sm.inputs)` for discovery
-    // and `sm.inputs.speed = 0.4` for assignment. Triggers appear in the
-    // map for discoverability but cannot be fired through it — call
-    // `sm.getTrigger("...").fire()` instead.
-    Q_PROPERTY(QQmlPropertyMap* inputs READ inputs CONSTANT)
-    Q_PROPERTY(QStringList inputNames READ inputNames CONSTANT)
 
 public:
     // Mirrors rive::HitResult so QML can branch on pointer outcomes.
@@ -64,19 +53,8 @@ public:
 
     QString name() const;
 
-    QQmlPropertyMap* inputs() const { return m_inputs; }
-    QStringList inputNames() const { return m_inputCache.keys(); }
-
     // For RiveView's render path. Non-owning.
     rive::StateMachineInstance* raw() const;
-
-    // Typed input access. Returns nullptr if no input exists with the
-    // given name OR the input exists with a different type. Returned
-    // pointer is owned by this state machine (parented here) — don't
-    // delete. Same name always returns the same instance.
-    Q_INVOKABLE RiveBoolInput* getBool(const QString& name);
-    Q_INVOKABLE RiveNumberInput* getNumber(const QString& name);
-    Q_INVOKABLE RiveTriggerInput* getTrigger(const QString& name);
 
     // Pointer events. Coordinates are in artboard-local space. See
     // RiveView for the screen→artboard transform that the default
@@ -105,23 +83,8 @@ signals:
 
 private:
     void drainStateChanges();
-    void buildInputsMap();
-    // Re-entrancy guard: when a typed wrapper's valueChanged fires we
-    // write the new value back into m_inputs, which fires the map's
-    // valueChanged, which would loop us back into the wrapper's setter.
-    // Set true while we touch the map from the wrapper side.
-    bool m_inputMapGuard = false;
 
     std::unique_ptr<rive::StateMachineInstance> m_sm;
-
-    // Input wrapper cache keyed by name. Dedup so bindings stay stable.
-    // QPointer so the cache entry auto-nulls if an input is deleted out
-    // of band (shouldn't happen, but defensive).
-    QHash<QString, QPointer<RiveInput>> m_inputCache;
-
-    // Dynamic property bag exposed to QML — see the inputs Q_PROPERTY.
-    // Parented to `this`; populated in buildInputsMap().
-    QQmlPropertyMap* m_inputs = nullptr;
 };
 
 #endif // RIVE_STATE_MACHINE_H

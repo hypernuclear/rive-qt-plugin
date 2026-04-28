@@ -62,8 +62,6 @@ qt_add_qml_module(rive_qt
         src/rive/rive_artboard.h
         src/rive/rive_file.cpp
         src/rive/rive_file.h
-        src/rive/rive_input.cpp
-        src/rive/rive_input.h
         src/rive/rive_key_map.cpp
         src/rive/rive_key_map.h
         src/rive/rive_qt_factory.cpp

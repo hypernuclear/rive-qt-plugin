@@ -72,8 +72,8 @@ class RiveView : public QQuickItem
                    NOTIFY autoBindViewModelChanged)
     Q_PROPERTY(RiveViewModelInstance* viewModel READ viewModel NOTIFY viewModelChanged)
     // Active state machine, exposed as a notifying property so QML can
-    // bind to its inputs map / inputNames / etc. and refresh when the
-    // underlying SM is rebuilt (artboard or stateMachineName change).
+    // bind to it and react when the SM is rebuilt (artboard or
+    // stateMachineName change).
     Q_PROPERTY(RiveStateMachine* stateMachine READ stateMachine NOTIFY stateMachineChanged)
     // Drive the artboard's runtime layout. Invalid (default) = use the
     // editor-authored design-time size. Setting a valid QSizeF drives
