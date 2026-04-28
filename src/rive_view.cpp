@@ -168,6 +168,30 @@ void RiveView::setViewModelInstanceName(const QString& name)
     update();
 }
 
+void RiveView::setAutoBindViewModel(bool b)
+{
+    if (m_autoBindViewModel == b)
+        return;
+    m_autoBindViewModel = b;
+    emit autoBindViewModelChanged();
+    // Toggling forces a VM rebuild on the next paint — either to drop
+    // the existing wrapper (off) or instantiate one (on).
+    m_loadRequested = true;
+    m_settled = false;
+    update();
+}
+
+bool RiveView::bindViewModelInstance(const QString& name)
+{
+    if (!m_autoBindViewModel)
+    {
+        m_autoBindViewModel = true;
+        emit autoBindViewModelChanged();
+    }
+    setViewModelInstanceName(name);
+    return m_file != nullptr;
+}
+
 void RiveView::setLayoutSize(const QSizeF& size)
 {
     if (m_layoutSize == size)
@@ -220,8 +244,11 @@ void RiveView::onSceneGraphInvalidated()
     // no longer valid — drop and re-create on the next paint. SM goes
     // with the artboard (Qt parent chain).
     if (m_stateMachine)
+    {
         m_stateMachine->disconnect(this);
-    m_stateMachine = nullptr;
+        m_stateMachine.reset(); // Must die before the artboard.
+        emit stateMachineChanged();
+    }
     if (m_viewModel)
     {
         m_viewModel.reset();
@@ -240,10 +267,15 @@ void RiveView::onSceneGraphInvalidated()
 
 void RiveView::rebuildArtboard()
 {
-    // Drop SM + artboard (SM is a Qt child of artboard).
+    // SM must die before the artboard — it holds a rive::ArtboardInstance
+    // ref via its rive::StateMachineInstance and touches it during
+    // destruction (cleanupFocusTree).
     if (m_stateMachine)
+    {
         m_stateMachine->disconnect(this);
-    m_stateMachine = nullptr;
+        m_stateMachine.reset();
+        emit stateMachineChanged();
+    }
     m_artboard.reset();
 
     if (!m_file)
@@ -272,6 +304,8 @@ void RiveView::rebuildViewModel()
         m_viewModel.reset();
         emit viewModelChanged();
     }
+    if (!m_autoBindViewModel)
+        return; // Caller suppressed binding — leave m_viewModel null.
     if (!m_file || !m_artboard || !m_artboard->raw())
         return;
 
@@ -327,13 +361,19 @@ void RiveView::rebuildViewModel()
 
 void RiveView::rebuildStateMachine()
 {
+    RiveStateMachine* prev = m_stateMachine.get();
+
     if (m_stateMachine)
     {
         m_stateMachine->disconnect(this);
-        m_stateMachine = nullptr;
+        m_stateMachine.reset();
     }
     if (!m_artboard)
+    {
+        if (prev != m_stateMachine.get())
+            emit stateMachineChanged();
         return;
+    }
 
     RiveStateMachine* sm = m_artboard->createStateMachine(m_stateMachineName);
     if (!sm)
@@ -341,12 +381,21 @@ void RiveView::rebuildStateMachine()
         // Not fatal — an artboard may legitimately have no state machine,
         // or the user typed a name that doesn't exist. Animations
         // continue to play (default timeline).
+        if (prev != m_stateMachine.get())
+            emit stateMachineChanged();
         return;
     }
-    m_stateMachine = sm;
-    connect(sm, &RiveStateMachine::eventReported, this, &RiveView::eventReported);
+    // The SM is constructed parent-less on the render thread (see
+    // RiveArtboard::createStateMachine). Move it to the GUI thread so
+    // its child QQmlPropertyMap (the inputs map) is reachable from QML
+    // without "different thread than the application engine" warnings.
+    sm->moveToThread(this->thread());
+    m_stateMachine.reset(sm);
     connect(sm, &RiveStateMachine::stateChanged, this,
             &RiveView::stateMachineStateChanged);
+
+    if (prev != m_stateMachine.get())
+        emit stateMachineChanged();
 }
 
 void RiveView::tryLoad()
@@ -365,7 +414,7 @@ void RiveView::tryLoad()
             m_loadedStateMachineName.clear();
             m_loadedViewModelName.clear();
             m_loadedViewModelInstanceName.clear();
-            m_stateMachine = nullptr;
+            m_stateMachine.reset(); // before m_artboard.reset() below
             if (m_viewModel)
             {
                 m_viewModel.reset();
@@ -384,8 +433,8 @@ void RiveView::tryLoad()
             qCWarning(lcRiveView) << "Load failed:" << err;
             emit loadFailed(err);
             m_file.reset();
+            m_stateMachine.reset(); // before m_artboard.reset()
             m_artboard.reset();
-            m_stateMachine = nullptr;
             emit artboardNamesChanged();
             return;
         }
@@ -476,8 +525,13 @@ void RiveView::mousePressEvent(QMouseEvent* event)
         // Click grabs keyboard focus so subsequent key events reach
         // rive's FocusManager via our keyPressEvent override.
         forceActiveFocus();
-        dispatchPointer(QEvent::MouseButtonPress, event->position(),
-                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
+        // Pointer id 0 — must match the id used for hover dispatches
+        // below. Rive's state machine tracks listener engagement per
+        // pointer id; using event->points().at(0).id() (which Qt 6
+        // assigns from the mouse's pointing device, often 1) would
+        // make hover and click look like two unrelated pointers and
+        // break click-on-hovered-target. Touch events use real ids.
+        dispatchPointer(QEvent::MouseButtonPress, event->position(), 0);
         event->accept();
         return;
     }
@@ -488,8 +542,7 @@ void RiveView::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
-        dispatchPointer(QEvent::MouseMove, event->position(),
-                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
+        dispatchPointer(QEvent::MouseMove, event->position(), 0);
         event->accept();
         return;
     }
@@ -500,8 +553,7 @@ void RiveView::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
-        dispatchPointer(QEvent::MouseButtonRelease, event->position(),
-                        static_cast<int>(event->pointingDevice() ? event->points().at(0).id() : 0));
+        dispatchPointer(QEvent::MouseButtonRelease, event->position(), 0);
         event->accept();
         return;
     }

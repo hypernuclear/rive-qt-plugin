@@ -30,6 +30,7 @@
 #include <QHash>
 #include <QObject>
 #include <QPointer>
+#include <QQmlPropertyMap>
 #include <QString>
 #include <QStringList>
 #include <QtQmlIntegration/qqmlintegration.h>
@@ -89,6 +90,15 @@ class RiveViewModelInstance : public QObject
     QML_NAMED_ELEMENT(RiveViewModelInstance)
     QML_UNCREATABLE("Created via RiveView")
     Q_PROPERTY(QStringList propertyNames READ propertyNames CONSTANT)
+    // Dynamic name → value bag. Eager-populated at construction so QML
+    // can `Object.keys(vmi.props)` and bind declaratively via
+    // `Text { text: vmi.props.title }` / `vmi.props.title = "..."`.
+    // Only primitive-valued properties (number / boolean / string /
+    // color / enum) participate. Triggers appear with a sentinel for
+    // discoverability but cannot be fired through the map — call
+    // `vmi.trigger("...").fire()`. Lists / nested VMs / image assets /
+    // artboard refs stay typed-only via the explicit accessors.
+    Q_PROPERTY(QQmlPropertyMap* props READ props CONSTANT)
 
 public:
     RiveViewModelInstance(rive::rcp<rive::ViewModelInstance> instance,
@@ -103,6 +113,8 @@ public:
     ~RiveViewModelInstance() override;
 
     QStringList propertyNames() const;
+
+    QQmlPropertyMap* props() const { return m_props; }
 
     // Typed accessors. Return nullptr if the property doesn't exist or
     // exists with a different type. Cached per-name so repeated calls
@@ -152,6 +164,12 @@ private:
     template <typename T>
     T* lookupOrCreate(const QString& name);
 
+    void buildPropsMap();
+
+    // Re-entrancy guard for the props map ↔ typed-wrapper sync. See
+    // RiveStateMachine::m_inputMapGuard for the same pattern.
+    bool m_propsGuard = false;
+
     rive::rcp<rive::ViewModelInstance> m_instance;
 
     // Borrowed; provided by RiveView so the image / artboard-ref
@@ -167,6 +185,10 @@ private:
     // auto-null (defensive — children share `this` as parent so they
     // die with us, but a stray deleteLater() shouldn't break us).
     QHash<QString, QPointer<RiveVMProperty>> m_propertyCache;
+
+    // Dynamic property bag exposed to QML — see the props Q_PROPERTY.
+    // Parented to `this`; populated by buildPropsMap() in the ctor.
+    QQmlPropertyMap* m_props = nullptr;
 };
 
 #endif // RIVE_VIEW_MODEL_H

@@ -225,6 +225,10 @@ public:
     Type type() const override { return Type::Trigger; }
     void poll() override;
 
+    /// Fires this trigger. The state machine observes the trigger on the
+    /// next advance() and clears it after consumption. Multiple fire()
+    /// calls between advances collapse to a single activation; reading
+    /// any "is fired" state before the next advance is undefined.
     Q_INVOKABLE void fire();
 
 signals:

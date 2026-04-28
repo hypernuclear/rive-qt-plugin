@@ -72,14 +72,19 @@ QString RiveViewModel::defaultInstanceName() const
 
 RiveViewModelInstance::RiveViewModelInstance(rive::rcp<rive::ViewModelInstance> instance,
                                              QObject* parent)
-    : QObject(parent), m_instance(std::move(instance))
-{}
+    : QObject(parent), m_instance(std::move(instance)), m_props(new QQmlPropertyMap(this))
+{
+    buildPropsMap();
+}
 
 RiveViewModelInstance::RiveViewModelInstance(rive::rcp<rive::ViewModelInstance> instance,
                                              rive::Factory* factory, rive::File* file,
                                              QObject* parent)
-    : QObject(parent), m_instance(std::move(instance)), m_factory(factory), m_file(file)
-{}
+    : QObject(parent), m_instance(std::move(instance)), m_factory(factory), m_file(file),
+      m_props(new QQmlPropertyMap(this))
+{
+    buildPropsMap();
+}
 
 RiveViewModelInstance::~RiveViewModelInstance() = default;
 
@@ -305,4 +310,133 @@ RiveViewModelInstance* RiveViewModelInstance::wrap(rive::rcp<rive::ViewModelInst
 void RiveViewModelInstance::notifyMutated()
 {
     emit propertyMutated();
+}
+
+void RiveViewModelInstance::buildPropsMap()
+{
+    if (!m_instance || !m_props)
+        return;
+    static const QString kTriggerSentinel = QStringLiteral("<trigger>");
+
+    for (const rive::rcp<rive::ViewModelInstanceValue>& val : m_instance->propertyValues())
+    {
+        if (!val)
+            continue;
+        rive::ViewModelProperty* prop = val->viewModelProperty();
+        if (!prop)
+            continue;
+        const QString name = QString::fromStdString(prop->name());
+        if (name.isEmpty())
+            continue;
+
+        if (val->is<rive::ViewModelInstanceNumber>())
+        {
+            RiveVMNumberProperty* p = number(name);
+            if (!p)
+                continue;
+            m_props->insert(name, p->value());
+            connect(p, &RiveVMNumberProperty::valueChanged, this, [this, name, p]() {
+                if (m_propsGuard)
+                    return;
+                m_propsGuard = true;
+                m_props->insert(name, p->value());
+                m_propsGuard = false;
+            });
+        }
+        else if (val->is<rive::ViewModelInstanceBoolean>())
+        {
+            RiveVMBooleanProperty* p = boolean(name);
+            if (!p)
+                continue;
+            m_props->insert(name, p->value());
+            connect(p, &RiveVMBooleanProperty::valueChanged, this, [this, name, p]() {
+                if (m_propsGuard)
+                    return;
+                m_propsGuard = true;
+                m_props->insert(name, p->value());
+                m_propsGuard = false;
+            });
+        }
+        else if (val->is<rive::ViewModelInstanceString>())
+        {
+            RiveVMStringProperty* p = string(name);
+            if (!p)
+                continue;
+            m_props->insert(name, p->value());
+            connect(p, &RiveVMStringProperty::valueChanged, this, [this, name, p]() {
+                if (m_propsGuard)
+                    return;
+                m_propsGuard = true;
+                m_props->insert(name, p->value());
+                m_propsGuard = false;
+            });
+        }
+        else if (val->is<rive::ViewModelInstanceColor>())
+        {
+            RiveVMColorProperty* p = color(name);
+            if (!p)
+                continue;
+            m_props->insert(name, p->value());
+            connect(p, &RiveVMColorProperty::valueChanged, this, [this, name, p]() {
+                if (m_propsGuard)
+                    return;
+                m_propsGuard = true;
+                m_props->insert(name, p->value());
+                m_propsGuard = false;
+            });
+        }
+        else if (val->is<rive::ViewModelInstanceEnum>())
+        {
+            RiveVMEnumProperty* p = enumProperty(name);
+            if (!p)
+                continue;
+            // Use the string form — most natural for QML / template
+            // strings. Writes accept either a string (route through
+            // setValueName) or an int (route through setValueIndex).
+            m_props->insert(name, p->valueName());
+            connect(p, &RiveVMEnumProperty::valueChanged, this, [this, name, p]() {
+                if (m_propsGuard)
+                    return;
+                m_propsGuard = true;
+                m_props->insert(name, p->valueName());
+                m_propsGuard = false;
+            });
+        }
+        else if (val->is<rive::ViewModelInstanceTrigger>())
+        {
+            (void)trigger(name);
+            m_props->insert(name, kTriggerSentinel);
+        }
+        // Lists / nested VMs / image assets / artboard refs intentionally
+        // skipped — their wrappers don't reduce to a primitive value and
+        // are still reachable via the explicit typed accessors.
+    }
+
+    connect(m_props, &QQmlPropertyMap::valueChanged, this,
+            [this](const QString& key, const QVariant& v) {
+                if (m_propsGuard)
+                    return;
+                QPointer<RiveVMProperty> base = m_propertyCache.value(key);
+                if (!base)
+                    return;
+                m_propsGuard = true;
+                if (auto* p = qobject_cast<RiveVMNumberProperty*>(base.data()))
+                    p->setValue(v.toDouble());
+                else if (auto* p = qobject_cast<RiveVMBooleanProperty*>(base.data()))
+                    p->setValue(v.toBool());
+                else if (auto* p = qobject_cast<RiveVMStringProperty*>(base.data()))
+                    p->setValue(v.toString());
+                else if (auto* p = qobject_cast<RiveVMColorProperty*>(base.data()))
+                    p->setValue(v.value<QColor>());
+                else if (auto* p = qobject_cast<RiveVMEnumProperty*>(base.data()))
+                {
+                    // Accept either index or name from QML.
+                    if (v.typeId() == QMetaType::QString)
+                        p->setValueName(v.toString());
+                    else
+                        p->setValueIndex(v.toInt());
+                }
+                // Triggers ignore writes — fire() must be called explicitly.
+                m_propsGuard = false;
+            });
 }

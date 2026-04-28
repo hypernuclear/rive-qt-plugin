@@ -99,8 +99,10 @@ public:
 
     Type type() const override { return Type::Trigger; }
 
-    // Triggers are one-shot — rive consumes them on the next advance().
-    // No value to read; no valueChanged signal.
+    /// Fires this trigger. The state machine observes the trigger on the
+    /// next advance() and clears it after consumption. Multiple fire()
+    /// calls between advances collapse to a single activation; reading
+    /// any "is fired" state before the next advance is undefined.
     Q_INVOKABLE void fire();
 
 private:

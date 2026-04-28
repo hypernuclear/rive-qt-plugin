@@ -21,7 +21,6 @@
 // QML to handle input manually (e.g. to plug in a touch/XR source).
 
 #include "rive/rive_artboard.h"
-#include "rive/rive_event.h"
 #include "rive/rive_state_machine.h"
 #include "rive/rive_view_model.h"
 
@@ -63,7 +62,19 @@ class RiveView : public QQuickItem
                    NOTIFY viewModelNameChanged)
     Q_PROPERTY(QString viewModelInstanceName READ viewModelInstanceName
                    WRITE setViewModelInstanceName NOTIFY viewModelInstanceNameChanged)
+    // Master switch for auto-binding the artboard's editor-default
+    // view-model. Defaults to true — preserves the historic behavior
+    // where an empty `viewModelName` follows whatever the editor wired
+    // up. Set to false to suppress binding entirely (useful when an
+    // artboard ships with multiple VMs and the host wants to pick one
+    // imperatively via bindViewModelInstance(name) later).
+    Q_PROPERTY(bool autoBindViewModel READ autoBindViewModel WRITE setAutoBindViewModel
+                   NOTIFY autoBindViewModelChanged)
     Q_PROPERTY(RiveViewModelInstance* viewModel READ viewModel NOTIFY viewModelChanged)
+    // Active state machine, exposed as a notifying property so QML can
+    // bind to its inputs map / inputNames / etc. and refresh when the
+    // underlying SM is rebuilt (artboard or stateMachineName change).
+    Q_PROPERTY(RiveStateMachine* stateMachine READ stateMachine NOTIFY stateMachineChanged)
     // Drive the artboard's runtime layout. Invalid (default) = use the
     // editor-authored design-time size. Setting a valid QSizeF drives
     // the artboard size and re-runs layout. Useful for responsive
@@ -113,6 +124,16 @@ public:
     QString viewModelInstanceName() const { return m_viewModelInstanceName; }
     void setViewModelInstanceName(const QString& name);
 
+    bool autoBindViewModel() const { return m_autoBindViewModel; }
+    void setAutoBindViewModel(bool b);
+
+    // Imperative bind by instance name. Re-enables autoBindViewModel if
+    // it was off, then forwards to setViewModelInstanceName(name).
+    // Reads better than the property setter in onCompleted handlers.
+    // Returns true if a load was scheduled (file present); the actual
+    // bind result is observable via the `viewModel` property.
+    Q_INVOKABLE bool bindViewModelInstance(const QString& name);
+
     RiveViewModelInstance* viewModel() const { return m_viewModel.get(); }
 
     QSizeF layoutSize() const { return m_layoutSize; }
@@ -121,7 +142,7 @@ public:
     // Active state machine for QML binding. Returns nullptr before load
     // completes or if the named SM doesn't exist. The pointer is stable
     // until the SM is swapped (new artboard or stateMachineName).
-    Q_INVOKABLE RiveStateMachine* stateMachine() const { return m_stateMachine; }
+    RiveStateMachine* stateMachine() const { return m_stateMachine.get(); }
 
     // QQuickItem
     QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
@@ -138,11 +159,12 @@ signals:
     void viewModelNamesChanged();
     void viewModelNameChanged();
     void viewModelInstanceNameChanged();
+    void autoBindViewModelChanged();
     void viewModelChanged();
+    void stateMachineChanged();
     void layoutSizeChanged();
 
     void loadFailed(const QString& reason);
-    void eventReported(const RiveEvent& event);
     void stateMachineStateChanged(const QString& layerName, const QString& stateName);
 
 protected:
@@ -178,6 +200,7 @@ private:
     Fit m_fit = Fit::Contain;
     bool m_playing = true;
     bool m_inputForwarding = true;
+    bool m_autoBindViewModel = true;
     bool m_settled = false;
     bool m_loadRequested = false;
 
@@ -199,11 +222,18 @@ private:
 
     // Created on the render thread, so we can't use Qt parenting to
     // RiveView (GUI thread) — Qt refuses cross-thread setParent. Own
-    // via unique_ptr and let QObject destructors handle teardown. The
-    // active SM (if any) is Qt-parented to m_artboard, so m_stateMachine
-    // QPointer auto-nulls when the artboard swaps.
+    // via unique_ptr and let QObject destructors handle teardown.
+    //
+    // Declaration order matters: m_stateMachine must come AFTER
+    // m_artboard so the unique_ptr destructors run in reverse order
+    // and the SM dies before the artboard. The SM's underlying
+    // rive::StateMachineInstance touches its owning rive::Artboard
+    // during destruction (cleanupFocusTree).
     std::unique_ptr<RiveArtboard> m_artboard;
-    QPointer<RiveStateMachine> m_stateMachine;
+    // Owning. The SM is parent-less (see RiveArtboard::createStateMachine)
+    // and moveToThread'd to RiveView's (GUI) thread so its
+    // QQmlPropertyMap inputs map is reachable from QML.
+    std::unique_ptr<RiveStateMachine> m_stateMachine;
 
     // View model: own as unique_ptr (created on render thread, never
     // re-parented across threads). RiveView holds the canonical

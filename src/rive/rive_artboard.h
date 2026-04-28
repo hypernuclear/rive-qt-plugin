@@ -59,6 +59,19 @@ public:
     // State machines defined on this artboard, in declaration order.
     QStringList stateMachineNames() const;
 
+    // Text run mutation. LEGACY: prefer binding a view-model string
+    // property to the run in the editor and writing through
+    // RiveViewModelInstance::props — Rive itself is steering away from
+    // runtime text-run mutation. These remain for parity with rive-wasm
+    // and direct designer-handoff workflows. Returns true if the named
+    // run was found and the text was set; false if not.
+    Q_INVOKABLE bool setTextRun(const QString& name, const QString& value);
+    // Path is slash-delimited and resolves through nested artboards
+    // (e.g. "Card/Header"). Empty path is equivalent to setTextRun.
+    Q_INVOKABLE bool setTextRunAtPath(const QString& name,
+                                      const QString& value,
+                                      const QString& path);
+
     // Raw access for the render backend.
     rive::ArtboardInstance* raw() const;
 

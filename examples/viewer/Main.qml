@@ -5,7 +5,6 @@
 //   - view-model panel (auto-built from the bound VM's properties,
 //     with type-specific editors per property)
 //   - layout-size override (drives rive's runtime layout system)
-//   - reported-event log
 //   - keyboard focus indicator + Tab/arrow-key navigation
 //   - mouse + touch dispatch via RiveView's built-in forwarding
 
@@ -126,6 +125,16 @@ ApplicationWindow {
                     editText === "(blank)" ? "" : editText
             }
 
+            CheckBox {
+                text: qsTr("Auto-bind VM")
+                checked: rive.autoBindViewModel
+                onClicked: rive.autoBindViewModel = checked
+                ToolTip.text: qsTr("Off: leave the view-model unbound. " +
+                                   "Use bindViewModelInstance() to attach one explicitly.")
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+            }
+
             Button {
                 text: rive.playing ? qsTr("Pause") : qsTr("Play")
                 onClicked: rive.playing = !rive.playing
@@ -158,13 +167,6 @@ ApplicationWindow {
                     onLoadFailed: reason => {
                         status.text = qsTr("Failed: ") + reason
                     }
-
-                    onEventReported: event => {
-                        eventLog.append(
-                            Qt.formatTime(new Date(), "hh:mm:ss") +
-                            "  " + event.name +
-                            (event.delay > 0 ? " (+" + event.delay.toFixed(2) + "s)" : ""))
-                    }
                 }
             }
 
@@ -186,8 +188,8 @@ ApplicationWindow {
                         id: sideTabBar
                         Layout.fillWidth: true
                         TabButton { text: qsTr("View Model") }
+                        TabButton { text: qsTr("Inputs") }
                         TabButton { text: qsTr("Layout") }
-                        TabButton { text: qsTr("Events") }
                     }
 
                     StackLayout {
@@ -226,6 +228,126 @@ ApplicationWindow {
                                     Layout.fillWidth: true
                                     sourceComponent: vmPanelComponent
                                     property var vmInstance: rive.viewModel
+                                }
+                            }
+                        }
+
+                        // ----- Inputs tab ------------------------------------
+                        //
+                        // Drives the active state machine via the new
+                        // dynamic `inputs` QQmlPropertyMap. We discover
+                        // names via `inputNames` (so the Repeater has a
+                        // real array model) and fish the current value
+                        // out of `inputs[name]` to dispatch on JS type:
+                        //   boolean → Switch
+                        //   number  → Slider
+                        //   string  → trigger sentinel ("<trigger>"),
+                        //             rendered as a Fire button which
+                        //             routes through the typed accessor.
+                        //
+                        // This is the parallel to the View Model tab —
+                        // proves the "typed-accessor + dynamic-map sugar"
+                        // dual is wired correctly end-to-end.
+
+                        ScrollView {
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                            ColumnLayout {
+                                width: parent.width
+                                spacing: 6
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: rive.stateMachine
+                                              ? qsTr("State machine: ") +
+                                                rive.stateMachine.name +
+                                                "  ·  " +
+                                                rive.stateMachine.inputNames.length +
+                                                qsTr(" input/inputs")
+                                              : qsTr("(no state machine)")
+                                    color: rive.stateMachine ? "#aaa" : "#777"
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Label {
+                                    Layout.fillWidth: true
+                                    visible: rive.stateMachine &&
+                                             rive.stateMachine.inputNames.length === 0
+                                    text: qsTr("(state machine has no inputs)")
+                                    color: "#777"
+                                    font.pixelSize: 11
+                                    wrapMode: Text.WordWrap
+                                }
+
+                                Repeater {
+                                    model: rive.stateMachine
+                                               ? rive.stateMachine.inputNames
+                                               : []
+
+                                    delegate: RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 6
+                                        property string inputName: modelData
+                                        // typeof on a JS primitive — the property map
+                                        // hands us bool/number/string directly.
+                                        property string jsType:
+                                            rive.stateMachine
+                                                ? typeof rive.stateMachine.inputs[inputName]
+                                                : "undefined"
+
+                                        Label {
+                                            text: inputName
+                                            color: "#ddd"
+                                            Layout.preferredWidth: 110
+                                            elide: Text.ElideRight
+                                        }
+
+                                        // boolean → Switch, two-way through the map
+                                        Switch {
+                                            visible: jsType === "boolean"
+                                            checked: jsType === "boolean"
+                                                       ? rive.stateMachine.inputs[inputName]
+                                                       : false
+                                            onClicked: rive.stateMachine.inputs[inputName] = checked
+                                        }
+
+                                        // number → Slider with live value, two-way through the map
+                                        Slider {
+                                            visible: jsType === "number"
+                                            Layout.fillWidth: true
+                                            from: 0
+                                            to: 100
+                                            value: jsType === "number"
+                                                       ? rive.stateMachine.inputs[inputName]
+                                                       : 0
+                                            onMoved: rive.stateMachine.inputs[inputName] = value
+                                        }
+                                        Label {
+                                            visible: jsType === "number"
+                                            text: jsType === "number"
+                                                      ? Number(rive.stateMachine.inputs[inputName]).toFixed(1)
+                                                      : ""
+                                            color: "#888"
+                                            font.family: "Menlo"
+                                            font.pixelSize: 11
+                                            Layout.preferredWidth: 36
+                                        }
+
+                                        // trigger sentinel — fire via the typed
+                                        // accessor since the map is read-only for
+                                        // triggers (documented).
+                                        Button {
+                                            visible: jsType === "string"
+                                            text: qsTr("Fire")
+                                            onClicked: {
+                                                const t = rive.stateMachine.getTrigger(inputName)
+                                                if (t) t.fire()
+                                            }
+                                        }
+                                        Item { visible: jsType === "string"; Layout.fillWidth: true }
+                                    }
                                 }
                             }
                         }
@@ -282,36 +404,6 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                             }
 
-                            Item { Layout.fillHeight: true }
-                        }
-
-                        // ----- Events tab ------------------------------------
-
-                        ColumnLayout {
-                            spacing: 6
-
-                            Rectangle {
-                                Layout.fillWidth: true
-                                Layout.fillHeight: true
-                                color: "#070707"
-                                border.color: "#222"
-                                border.width: 1
-
-                                ScrollView {
-                                    anchors.fill: parent
-                                    anchors.margins: 4
-                                    TextArea {
-                                        id: eventLog
-                                        readOnly: true
-                                        color: "#b0e0b0"
-                                        font.family: "Menlo"
-                                        font.pixelSize: 11
-                                        wrapMode: TextArea.Wrap
-                                        placeholderText: qsTr("(events appear here)")
-                                    }
-                                }
-                            }
-
                             Label {
                                 text: qsTr("Keyboard focus: ") +
                                       (rive.activeFocus ? qsTr("yes") : qsTr("no"))
@@ -326,6 +418,8 @@ ApplicationWindow {
                                 Layout.fillWidth: true
                                 font.pixelSize: 11
                             }
+
+                            Item { Layout.fillHeight: true }
                         }
                     }
                 }

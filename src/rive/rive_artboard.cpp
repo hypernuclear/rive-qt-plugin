@@ -5,6 +5,7 @@
 #include <rive/animation/state_machine_instance.hpp>
 #include <rive/artboard.hpp>
 #include <rive/input/focus_manager.hpp>
+#include <rive/text/text_value_run.hpp>
 
 RiveArtboard::RiveArtboard(std::unique_ptr<rive::ArtboardInstance> instance,
                            QString name,
@@ -83,6 +84,25 @@ QStringList RiveArtboard::stateMachineNames() const
     return out;
 }
 
+bool RiveArtboard::setTextRun(const QString& name, const QString& value)
+{
+    return setTextRunAtPath(name, value, QString());
+}
+
+bool RiveArtboard::setTextRunAtPath(const QString& name,
+                                    const QString& value,
+                                    const QString& path)
+{
+    if (!m_artboard || name.isEmpty())
+        return false;
+    rive::TextValueRun* run =
+        m_artboard->getTextRun(name.toStdString(), path.toStdString());
+    if (!run)
+        return false;
+    run->text(value.toStdString());
+    return true;
+}
+
 RiveStateMachine* RiveArtboard::createStateMachine(const QString& name)
 {
     if (!m_artboard)
@@ -94,7 +114,13 @@ RiveStateMachine* RiveArtboard::createStateMachine(const QString& name)
         instance = m_artboard->stateMachineNamed(name.toStdString());
     if (!instance)
         return nullptr;
-    return new RiveStateMachine(std::move(instance), this);
+    // Caller owns. The SM cannot be a Qt child of `this` because Qt
+    // requires moveToThread()'d objects to be parent-less; RiveView
+    // moves the SM to the GUI thread so its QQmlPropertyMap children
+    // are reachable from QML. Caller must destroy the SM BEFORE
+    // m_artboard goes — rive::StateMachineInstance::~ touches the
+    // owning rive::Artboard during cleanupFocusTree.
+    return new RiveStateMachine(std::move(instance), nullptr);
 }
 
 bool RiveArtboard::keyInput(int qtKey, int qtModifiers, bool pressed, bool isAutoRepeat)

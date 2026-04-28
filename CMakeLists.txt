@@ -60,7 +60,6 @@ qt_add_qml_module(rive_qt
         src/backends/rive_render_backend.h
         src/rive/rive_artboard.cpp
         src/rive/rive_artboard.h
-        src/rive/rive_event.h
         src/rive/rive_file.cpp
         src/rive/rive_file.h
         src/rive/rive_input.cpp
