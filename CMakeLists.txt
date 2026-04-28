@@ -19,6 +19,16 @@ endif()
 option(RIVE_QT_BUILD_EXAMPLES
     "Build the standalone viewer example" ${_rive_qt_is_top_level})
 
+# Vulkan backend opt-in. Default ON because the Rive PLS premake
+# downloads Vulkan-Headers + VulkanMemoryAllocator from GitHub on first
+# configure (~2-3 min one-time hit), but no system Vulkan SDK install
+# is required (we use Qt's QVulkanDeviceFunctions for raw vk* calls
+# and Rive's vendored function-pointer dispatch for the rest).
+# Set to OFF to skip the Vulkan backend (e.g. CI without network access
+# or environments where the GitHub clones fail).
+option(RIVE_QT_WITH_VULKAN
+    "Build the Vulkan backend (downloads Vulkan-Headers + VMA)" ON)
+
 # ----------------------------------------------------------------------------
 # Qt
 # ----------------------------------------------------------------------------
@@ -104,6 +114,21 @@ if(NOT APPLE)
     )
 endif()
 
+# Vulkan backend — opt-in via RIVE_QT_WITH_VULKAN (default ON, set in
+# the options block at the top). Available on all platforms when on.
+# RIVE_QT_HAVE_VULKAN is the runtime gate the dispatch and backend code
+# read; keep separate from the build-system option so that tests and
+# code paths stay readable.
+if(RIVE_QT_WITH_VULKAN)
+    target_sources(rive_qt PRIVATE
+        src/backends/vulkan/rive_vulkan_backend.h
+        src/backends/vulkan/rive_vulkan_backend.cpp
+    )
+    target_compile_definitions(rive_qt PRIVATE RIVE_QT_HAVE_VULKAN=1)
+else()
+    target_compile_definitions(rive_qt PRIVATE RIVE_QT_HAVE_VULKAN=0)
+endif()
+
 # Rive is built with RTTI off (see rive_build_config.lua — "nonstandard for
 # Rive"). Every TU that touches rive types must match or the linker demands
 # typeinfo symbols rive never emitted. Per-file so host projects don't
@@ -134,6 +159,14 @@ endif()
 if(NOT APPLE)
     set_source_files_properties(
         src/backends/gl/rive_gl_backend.cpp
+        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
+    )
+endif()
+
+# Vulkan backend pulls in rive::gpu::* and Rive's vkutil types — match.
+if(RIVE_QT_WITH_VULKAN)
+    set_source_files_properties(
+        src/backends/vulkan/rive_vulkan_backend.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
     )
 endif()

@@ -117,17 +117,24 @@ struct RiveD3D11Backend::Impl
 
     uint64_t currentFrameNumber = 0;
 
-    void scheduleTextureCleanup()
+    // sync=true for shutdown paths (~RiveD3D11Backend,
+    // abandonGraphicsResources): delete inline. AfterSwapStage won't
+    // fire after sceneGraphInvalidated, so a deferred deletion would
+    // leak the QRhiTexture and trip Qt's "QRhi going down with N
+    // unreleased resources" warning during QRhi destruction.
+    void scheduleTextureCleanup(bool sync = false)
     {
         if (qsgTexture)
         {
-            if (window)
+            if (sync || !window)
+            {
+                delete qsgTexture;
+            }
+            else
             {
                 window->scheduleRenderJob(new TextureCleanupJob(qsgTexture),
                                           QQuickWindow::AfterSwapStage);
             }
-            // If the window is gone, leak the wrappers — see the Metal
-            // backend's matching comment. Same reasoning applies here.
             qsgTexture = nullptr;
         }
         // QRhiTexture is transitively owned by QSGPlainTexture.
@@ -147,7 +154,7 @@ RiveD3D11Backend::~RiveD3D11Backend()
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
 
-    m_impl->scheduleTextureCleanup();
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
 }
 
 bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
@@ -357,13 +364,14 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
 
 void RiveD3D11Backend::abandonGraphicsResources()
 {
+    // sceneGraphInvalidated fires before QRhi tears down — delete the
+    // QSGTexture inline so its QRhiTexture (and the underlying
+    // ID3D11Texture2D wrapper) is released before QRhi destruction
+    // walks its tracker. Otherwise Qt warns about unreleased resources.
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
-    m_impl->qsgTexture = nullptr;
-    m_impl->qrhiTexture = nullptr;
-    m_impl->targetTexture.Reset();
-    m_impl->textureSize = QSize();
     m_impl->context.Reset();
     m_impl->device.Reset();
     m_impl->rhi = nullptr;

@@ -86,18 +86,24 @@ struct RiveMetalBackend::Impl
 
     uint64_t currentFrameNumber = 0;
 
-    void scheduleTextureCleanup()
+    // sync=true for shutdown paths (~RiveMetalBackend,
+    // abandonGraphicsResources): delete inline. AfterSwapStage won't
+    // fire after sceneGraphInvalidated, so a deferred deletion would
+    // leak the QRhiTexture and trip Qt's "QRhi going down with N
+    // unreleased resources" warning during QRhi destruction.
+    void scheduleTextureCleanup(bool sync = false)
     {
         if (qsgTexture)
         {
-            if (window)
+            if (sync || !window)
+            {
+                delete qsgTexture;
+            }
+            else
             {
                 window->scheduleRenderJob(new TextureCleanupJob(qsgTexture),
                                           QQuickWindow::AfterSwapStage);
             }
-            // If the window is gone, leak the wrappers — the QRhi has
-            // already torn down its side and the process is shutting
-            // down anyway.
             qsgTexture = nullptr;
         }
         // QRhiTexture is transitively owned by QSGPlainTexture.
@@ -117,9 +123,7 @@ RiveMetalBackend::~RiveMetalBackend()
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
 
-    // RHI resources: schedule for deletion if the window is still live,
-    // otherwise leak (see scheduleTextureCleanup comment).
-    m_impl->scheduleTextureCleanup();
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
 }
 
 bool RiveMetalBackend::initialize(QQuickWindow* window, QString* errorOut)
@@ -315,13 +319,15 @@ void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit
 
 void RiveMetalBackend::abandonGraphicsResources()
 {
+    // sceneGraphInvalidated fires before QRhi tears down — delete the
+    // QSGTexture inline so its QRhiTexture (and the underlying
+    // MTLTexture wrapper) is released before QRhi destruction walks
+    // its tracker. Skipping this leaks the QRhiTexture and trips Qt's
+    // "QRhi going down with N unreleased resources" warning.
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
-    m_impl->qsgTexture = nullptr;
-    m_impl->qrhiTexture = nullptr;
-    m_impl->targetTexture = nil;
-    m_impl->textureSize = QSize();
     m_impl->device = nil;
     m_impl->queue = nil;
     m_impl->rhi = nullptr;

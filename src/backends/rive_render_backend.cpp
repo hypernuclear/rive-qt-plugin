@@ -27,6 +27,12 @@
 #include "gl/rive_gl_backend.h"
 #endif
 
+// Vulkan: opt-in via CMake (RIVE_QT_WITH_VULKAN). Available on all
+// platforms when enabled.
+#if RIVE_QT_HAVE_VULKAN
+#include "vulkan/rive_vulkan_backend.h"
+#endif
+
 std::unique_ptr<RiveRenderBackend>
 RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
 {
@@ -62,8 +68,10 @@ RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
     case QSGRendererInterface::OpenGL:
         return std::make_unique<RiveGLBackend>();
 #endif
-    // Vulkan also falls through for now; the Vulkan backend is the
-    // next planned phase.
+#if RIVE_QT_HAVE_VULKAN
+    case QSGRendererInterface::Vulkan:
+        return std::make_unique<RiveVulkanBackend>();
+#endif
     default:
         if (errorOut)
             *errorOut = QStringLiteral(

@@ -134,18 +134,24 @@ struct RiveGLBackend::Impl
             : nullptr;
     }
 
-    void scheduleTextureCleanup()
+    // sync=true for shutdown paths (~RiveGLBackend,
+    // abandonGraphicsResources): delete inline. AfterSwapStage won't
+    // fire after sceneGraphInvalidated, so a deferred deletion would
+    // leak the QRhiTexture and trip Qt's "QRhi going down with N
+    // unreleased resources" warning during QRhi destruction.
+    void scheduleTextureCleanup(bool sync = false)
     {
         if (qsgTexture)
         {
-            if (window)
+            if (sync || !window)
+            {
+                delete qsgTexture;
+            }
+            else
             {
                 window->scheduleRenderJob(new TextureCleanupJob(qsgTexture),
                                           QQuickWindow::AfterSwapStage);
             }
-            // Window-gone path: leak the wrappers (process is shutting
-            // down anyway, and the GL context may already be torn down
-            // so glDeleteTextures would be unsafe).
             qsgTexture = nullptr;
         }
         // QRhiTexture is transitively owned by QSGPlainTexture; the
@@ -164,7 +170,7 @@ RiveGLBackend::~RiveGLBackend()
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
-    m_impl->scheduleTextureCleanup();
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
 }
 
 bool RiveGLBackend::initialize(QQuickWindow* window, QString* errorOut)
@@ -391,16 +397,15 @@ void RiveGLBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit)
 
 void RiveGLBackend::abandonGraphicsResources()
 {
-    // QRhi tear-down. The GL context may already be invalid; we drop
-    // CPU-side wrappers but skip glDeleteTextures (the driver reaps
-    // orphaned names when the context dies).
+    // sceneGraphInvalidated fires before QRhi tears down — delete the
+    // QSGTexture inline so its QRhiTexture (and the underlying GLuint
+    // it adopted) is released before QRhi destruction walks its
+    // tracker. Skipping this leaks the QRhiTexture and trips Qt's
+    // "QRhi going down with N unreleased resources" warning.
+    m_impl->scheduleTextureCleanup(/*sync=*/true);
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
-    m_impl->qsgTexture = nullptr;
-    m_impl->qrhiTexture = nullptr;
-    m_impl->targetTextureId = 0;
-    m_impl->textureSize = QSize();
     m_impl->glContext = nullptr;
     m_impl->rhi = nullptr;
     m_impl->window = nullptr;
