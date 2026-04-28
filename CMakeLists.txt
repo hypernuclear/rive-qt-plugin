@@ -29,6 +29,12 @@ option(RIVE_QT_BUILD_EXAMPLES
 option(RIVE_QT_WITH_VULKAN
     "Build the Vulkan backend (downloads Vulkan-Headers + VMA)" ON)
 
+# D3D12 backend opt-in. Windows-only. Default ON because the runtime's
+# D3D12 backend is always built on Windows (no premake flag) — the only
+# cost of opt-out is dropping the wrapper + d3dx12.h dependency.
+option(RIVE_QT_WITH_D3D12
+    "Build the D3D12 backend (Windows only)" ON)
+
 # ----------------------------------------------------------------------------
 # Qt
 # ----------------------------------------------------------------------------
@@ -84,6 +90,19 @@ if(APPLE)
     )
 endif()
 
+# D3D12 backend — Windows-only, opt-in via RIVE_QT_WITH_D3D12. Available
+# whenever the runtime's d3d12 sources compiled (always on Windows).
+# RIVE_QT_HAVE_D3D12 is the runtime gate read by the dispatch.
+if(WIN32 AND RIVE_QT_WITH_D3D12)
+    target_sources(rive_qt PRIVATE
+        src/backends/d3d12/rive_d3d12_backend.h
+        src/backends/d3d12/rive_d3d12_backend.cpp
+    )
+    target_compile_definitions(rive_qt PRIVATE RIVE_QT_HAVE_D3D12=1)
+else()
+    target_compile_definitions(rive_qt PRIVATE RIVE_QT_HAVE_D3D12=0)
+endif()
+
 # D3D11 backend — Windows only.
 if(WIN32)
     target_sources(rive_qt PRIVATE
@@ -133,7 +152,6 @@ endif()
 set_source_files_properties(
     src/rive/rive_artboard.cpp
     src/rive/rive_file.cpp
-    src/rive/rive_input.cpp
     src/rive/rive_key_map.cpp
     src/rive/rive_qt_factory.cpp
     src/rive/rive_state_machine.cpp
@@ -148,6 +166,14 @@ set_source_files_properties(
 if(WIN32)
     set_source_files_properties(
         src/backends/d3d11/rive_d3d11_backend.cpp
+        PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
+    )
+endif()
+
+# D3D12 backend — same RTTI-off ABI match.
+if(WIN32 AND RIVE_QT_WITH_D3D12)
+    set_source_files_properties(
+        src/backends/d3d12/rive_d3d12_backend.cpp
         PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
     )
 endif()

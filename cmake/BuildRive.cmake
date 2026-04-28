@@ -597,11 +597,23 @@ endif()
 if(WIN32)
     target_link_libraries(rive INTERFACE
         d3d11
+        d3d12
         dxgi
         dxguid
         d3dcompiler
         opengl32
     )
+    # D3D12 backend pulls in <d3dx12.h>. The Microsoft DirectX-Headers
+    # repo ships these under `directx/` but Rive includes `<d3dx12.h>`
+    # at the top level — premake downloads the headers into
+    # dependencies/microsoft_DirectX-Headers_v<ver>/include/directx/ on
+    # first build, so we add that directory to the include path. Glob
+    # since the version suffix may change with runtime updates.
+    file(GLOB _rive_dx_headers_dirs
+        "${RIVE_BUILD_DIR}/dependencies/microsoft_DirectX-Headers_*/include/directx")
+    if(_rive_dx_headers_dirs)
+        target_include_directories(rive INTERFACE ${_rive_dx_headers_dirs})
+    endif()
 endif()
 
 # Linux: GL backend needs libGL. Apple GL on macOS comes via Qt's link

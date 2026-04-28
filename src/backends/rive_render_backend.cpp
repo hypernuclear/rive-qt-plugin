@@ -21,6 +21,10 @@
 #include "d3d11/rive_d3d11_backend.h"
 #endif
 
+#if RIVE_QT_HAVE_D3D12
+#include "d3d12/rive_d3d12_backend.h"
+#endif
+
 // GL backend covers Windows + Linux. macOS is intentionally excluded:
 // Apple deprecated GL and we have a Metal backend there anyway.
 #if !defined(__APPLE__)
@@ -59,10 +63,10 @@ RiveRenderBackend::create(QQuickWindow* window, QString* errorOut)
 #if defined(_WIN32) && !defined(__APPLE__)
     case QSGRendererInterface::Direct3D11:
         return std::make_unique<RiveD3D11Backend>();
-    // Direct3D12 falls through to default — D3D12 backend is a follow-up.
-    // Users who set QSG_RHI_BACKEND=d3d12 will see the "no backend" error
-    // rather than a crash; switching back to the default RHI restores
-    // rendering.
+#endif
+#if RIVE_QT_HAVE_D3D12
+    case QSGRendererInterface::Direct3D12:
+        return std::make_unique<RiveD3D12Backend>();
 #endif
 #if !defined(__APPLE__)
     case QSGRendererInterface::OpenGL:
