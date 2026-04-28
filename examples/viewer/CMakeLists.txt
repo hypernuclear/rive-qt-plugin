@@ -41,3 +41,15 @@ target_link_libraries(rive_viewer
 target_compile_definitions(rive_viewer PRIVATE
     RIVE_VIEWER_SAMPLES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples"
 )
+
+# Smoke-test the qt_add_rive_assets() codegen helper against one of the
+# bundled samples. Generates RiveViewer::Assets::DataBindingTest::*
+# constants in C++ and a DataBindingTest singleton in QML under
+# `RiveViewer.Assets`. Currently unused by Main.qml — present mainly to
+# verify the helper builds cleanly end-to-end.
+qt_add_rive_assets(rive_viewer
+    NAMESPACE RiveViewer::Assets
+    QML_URI RiveViewer.Assets
+    ASSETS
+        samples/data_binding_test.riv
+)

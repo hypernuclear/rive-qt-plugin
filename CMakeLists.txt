@@ -52,6 +52,12 @@ qt_standard_project_setup(REQUIRES 6.5)
 include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/BuildRive.cmake)
 
 # ----------------------------------------------------------------------------
+# rive-asset-gen build-time tool + the qt_add_rive_assets() helper.
+# ----------------------------------------------------------------------------
+add_subdirectory(tools/rive-asset-gen)
+include(${CMAKE_CURRENT_SOURCE_DIR}/cmake/RiveAssets.cmake)
+
+# ----------------------------------------------------------------------------
 # Plugin library + QML module
 # ----------------------------------------------------------------------------
 # Exposed to host projects as `rive_qt::rive_qt` (alias below). The QML
