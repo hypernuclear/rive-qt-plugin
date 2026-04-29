@@ -568,6 +568,14 @@ void RiveView::dispatchPointer(QEvent::Type type, const QPointF& localPos, int p
     case QEvent::TouchCancel:        m_stateMachine->pointerExit(ab, pointerId); break;
     default: break;
     }
+    // Wake the frame loop. Pointer events queue listener firings inside
+    // rive's SM, which only run on the next advance() call. If the SM
+    // had settled (e.g. an audio sample finished playing and there's no
+    // more animation in flight), onBeforeSynchronizing has stopped
+    // calling update() — so without this nudge, the listener queued by
+    // pointerDown never fires and clicks appear to do nothing.
+    m_settled = false;
+    update();
 }
 
 void RiveView::mousePressEvent(QMouseEvent* event)
