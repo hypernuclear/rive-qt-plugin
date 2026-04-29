@@ -43,7 +43,19 @@
         "targetArchitecture": "arm64",
         "logging": {
           "moduleLoad": false
-        }
+        },
+        "environment": [
+          // Qt 6 on macOS defaults to Apple's Secure Transport for TLS,
+          // which can fail handshakes against modern CDNs with
+          // errSSLPeerProtocolVersion (-9836). Switch to the OpenSSL
+          // backend (libqopensslbackend.dylib in Qt's plugins/tls).
+          { "name": "QT_TLS_BACKEND", "value": "openssl" },
+          // Qt's OpenSSL plugin dlopen's libssl.3.dylib / libcrypto.3.dylib
+          // at runtime. Homebrew installs them under
+          // /opt/homebrew/opt/openssl@3/lib, which isn't in the dylib
+          // default search path — point Qt at it explicitly.
+          { "name": "DYLD_LIBRARY_PATH", "value": "/opt/homebrew/opt/openssl@3/lib" }
+        ]
       },
       "windows": {
         "environment": [
