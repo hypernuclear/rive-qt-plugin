@@ -112,18 +112,14 @@ else()
     set(RIVE_TOOLS_FLAG "")
 endif()
 
-# Audio. When ON, pass --with_rive_audio=system to premake. `system`
-# enables miniaudio in full playback mode — rive opens the OS audio
-# device (WASAPI on Windows, CoreAudio on macOS, ALSA/PulseAudio on
-# Linux) and plays sound effects from .riv files directly. The
-# alternative `external` mode compiles miniaudio with MA_NO_DEVICE_IO
-# (decode only, no playback); use that when the host wants to route
-# rive's PCM through its own audio stack (e.g. Qt's QAudioSink) rather
-# than miniaudio's. We default to `system` since the common case is
-# "designer adds a sound effect to a Rive button click" and `system`
-# Just Works without glue code.
-if(RIVE_QT_WITH_AUDIO)
+# Audio mode → premake flag. Tri-state cache var defined in the root
+# CMakeLists. `none` skips the flag entirely (rive runtime drops audio
+# at .riv import). `system` and `external` map 1:1 to miniaudio's two
+# build modes; see the option doc in the root for details.
+if(RIVE_QT_WITH_AUDIO STREQUAL "system")
     set(RIVE_AUDIO_FLAG "--with_rive_audio=system")
+elseif(RIVE_QT_WITH_AUDIO STREQUAL "external")
+    set(RIVE_AUDIO_FLAG "--with_rive_audio=external")
 else()
     set(RIVE_AUDIO_FLAG "")
 endif()
@@ -774,8 +770,9 @@ endif()
 # input wiring on WITH_RIVE_AUDIO. Consumers must see the same gate so
 # any audio-aware codepath compiles consistently. Required for .riv
 # files containing audio (rive engine drops audio assets at import
-# without this define).
-if(RIVE_QT_WITH_AUDIO)
+# without this define). Both `system` and `external` modes set it; only
+# `none` skips it.
+if(NOT RIVE_QT_WITH_AUDIO STREQUAL "none")
     target_compile_definitions(rive INTERFACE WITH_RIVE_AUDIO)
 endif()
 

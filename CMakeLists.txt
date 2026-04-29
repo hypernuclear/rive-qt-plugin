@@ -60,17 +60,32 @@ option(RIVE_QT_WITH_D3D12
 option(RIVE_QT_WITH_SCRIPTING
     "Build the rive runtime with Lua scripting support" ON)
 
-# Audio opt-in. Default ON. We pass --with_rive_audio=system to premake,
-# which enables miniaudio in full playback mode — rive opens the OS
-# audio device directly (WASAPI on Windows, CoreAudio on macOS,
-# ALSA/PulseAudio on Linux) and plays sound effects from .riv files
-# without any host glue code. miniaudio runs alongside Qt's audio fine
-# (modern OS audio APIs are shared-mode). If you'd rather route rive's
-# audio through Qt's stack (e.g. for unified volume control), switch
-# the flag in cmake/BuildRive.cmake from `system` to `external` and
-# wire a custom QAudioSink — out of scope for this default.
-option(RIVE_QT_WITH_AUDIO
-    "Build the rive runtime with audio playback (miniaudio system mode)" ON)
+# Audio mode tri-state.
+#
+#   system    — miniaudio in full playback mode; rive opens the OS
+#               audio device directly (WASAPI / CoreAudio / ALSA) and
+#               plays .riv sound effects with zero host glue. Default —
+#               matches what every other rive binding ships.
+#   external  — miniaudio compiled with MA_NO_DEVICE_IO. Rive decodes
+#               + mixes audio but doesn't open a device; the host pulls
+#               PCM frames and routes them through its own audio stack
+#               (e.g. Qt's QAudioSink). Use when you want the host in
+#               control of mixing / effects / device selection.
+#   none      — audio support entirely off. Smaller binary, .riv files
+#               with audio assets load but their audio components are
+#               dropped at import. Use for size-sensitive builds that
+#               don't need sound.
+#
+# Stays a STRING (not BOOL) so consumers can pick a mode rather than
+# just on/off. Validated below.
+set(RIVE_QT_WITH_AUDIO "system" CACHE STRING
+    "Rive audio mode: system | external | none")
+set_property(CACHE RIVE_QT_WITH_AUDIO PROPERTY STRINGS system external none)
+if(NOT RIVE_QT_WITH_AUDIO MATCHES "^(system|external|none)$")
+    message(FATAL_ERROR
+        "RIVE_QT_WITH_AUDIO must be one of: system, external, none "
+        "(got '${RIVE_QT_WITH_AUDIO}')")
+endif()
 
 # Rive "tools" mode. Enables features the editor + dev workflows expect:
 #   - scripts can register without a verified Rive signature (so unsigned
