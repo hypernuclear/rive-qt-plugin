@@ -19,13 +19,29 @@ endif()
 option(RIVE_QT_BUILD_EXAMPLES
     "Build the standalone viewer example" ${_rive_qt_is_top_level})
 
-# Vulkan backend opt-in. Default ON because the Rive PLS premake
-# downloads Vulkan-Headers + VulkanMemoryAllocator from GitHub on first
-# configure (~2-3 min one-time hit), but no system Vulkan SDK install
-# is required (we use Qt's QVulkanDeviceFunctions for raw vk* calls
-# and Rive's vendored function-pointer dispatch for the rest).
+# Vulkan backend opt-in. Default ON on all platforms.
+#
+# When ON, the Rive PLS premake downloads Vulkan-Headers +
+# VulkanMemoryAllocator from GitHub on first configure (~2-3 min
+# one-time hit) and compiles SPIR-V shaders via glslangValidator +
+# spirv-opt. The runtime itself doesn't need a system Vulkan SDK — we
+# use Qt's QVulkanDeviceFunctions for raw vk* calls and Rive's vendored
+# function-pointer dispatch for the rest — but the build does need
+# glslang + spirv-tools available somewhere.
+#
+# Tool resolution per platform:
+#   - Windows: glslangValidator + spirv-opt vendored under cmake/vendor/.
+#   - macOS:   resolved at build time from $VULKAN_SDK, Homebrew
+#              (/opt/homebrew/bin, /usr/local/bin), or PATH. Install
+#              via `brew install glslang spirv-tools` or the Vulkan SDK
+#              from https://vulkan.lunarg.com/sdk/home#mac. Vulkan on
+#              macOS runs through MoltenVK (Qt's QVulkan integration
+#              loads it transparently); the platform-native Metal
+#              backend is also built and stays the default at runtime.
+#   - Linux:   glslangValidator + spirv-tools from distro repos.
+#
 # Set to OFF to skip the Vulkan backend (e.g. CI without network access
-# or environments where the GitHub clones fail).
+# or environments where glslang isn't installed).
 option(RIVE_QT_WITH_VULKAN
     "Build the Vulkan backend (downloads Vulkan-Headers + VMA)" ON)
 
@@ -80,6 +96,31 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2)
 
 qt_standard_project_setup(REQUIRES 6.5)
+
+# Vulkan auto-degrade. The plugin's Vulkan backend (rive_vulkan_backend.cpp)
+# uses QVulkanDeviceFunctions / QVulkanInstance from QtGui, which only
+# exist when Qt itself was configured with Vulkan support
+# (QT_FEATURE_vulkan=ON, requires Vulkan headers visible at Qt's
+# configure time). The standard macOS Qt Online Installer build ships
+# with QT_FEATURE_vulkan=OFF; same can happen on Linux distros that
+# don't pull in vulkan headers when building Qt.
+#
+# Rather than fail the build when the user's Qt doesn't support Vulkan,
+# silently drop the Vulkan backend and the rive --with_vulkan flag.
+# Other backends (Metal on Apple, D3D11/D3D12 on Windows, GL on Linux)
+# remain available. Users who want Vulkan on macOS need a Qt with
+# Vulkan support — typically that means building Qt from source against
+# the LunarG Vulkan SDK headers, since the prebuilt installer images
+# don't ship them.
+if(RIVE_QT_WITH_VULKAN AND NOT QT_FEATURE_vulkan)
+    message(STATUS
+        "RIVE_QT_WITH_VULKAN=ON but Qt was built without Vulkan support "
+        "(QT_FEATURE_vulkan=OFF). Disabling the Vulkan backend; the "
+        "rive runtime will be built without --with_vulkan too. To use "
+        "Vulkan on this platform, configure Qt with -DFEATURE_vulkan=ON "
+        "against the LunarG Vulkan SDK headers and rebuild Qt.")
+    set(RIVE_QT_WITH_VULKAN OFF)
+endif()
 
 # ----------------------------------------------------------------------------
 # rive-runtime — built via premake (see cmake/BuildRive.cmake).
