@@ -3,6 +3,7 @@
 #include "backends/rive_render_backend.h"
 #include "rive/rive_artboard.h"
 #include "rive/rive_file.h"
+#include "rive/rive_qt_asset_loader.h"
 #include "rive/rive_state_machine.h"
 
 #include <QGuiApplication>
@@ -293,6 +294,16 @@ bool RiveView::bindViewModelInstance(const QString& name)
     }
     setViewModelInstanceName(name);
     return m_file != nullptr;
+}
+
+void RiveView::setFallbackFontPath(const QString& path)
+{
+    RiveQtAssetLoader::setFallbackFontPath(path);
+}
+
+QString RiveView::fallbackFontPath()
+{
+    return RiveQtAssetLoader::fallbackFontPath();
 }
 
 void RiveView::setLayoutSize(const QSizeF& size)

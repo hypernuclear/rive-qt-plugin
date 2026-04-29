@@ -41,6 +41,21 @@ public:
                       rive::Span<const uint8_t> inBandBytes,
                       rive::Factory* factory) override;
 
+    // Font fallback. When a FontAsset can't be resolved via hosted CDN
+    // or referenced filesystem fetch, we read bytes from this path and
+    // hand them to the runtime — better than rendering blank text.
+    //
+    // Default is a platform-specific system font (Segoe UI on Windows,
+    // Helvetica on macOS, DejaVu Sans on Linux). The host can override
+    // — useful when shipping a packaged app with its own bundled font
+    // or pointing at a Qt resource (qrc:/...) bundled in the host's
+    // assets.
+    //
+    // Setting an empty path disables the fallback (text from missing
+    // font assets won't render).
+    static void setFallbackFontPath(const QString& path);
+    static QString fallbackFontPath();
+
 private:
     QUrl m_baseUrl;
 };

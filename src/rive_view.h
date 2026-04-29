@@ -180,6 +180,19 @@ public:
     // bind result is observable via the `viewModel` property.
     Q_INVOKABLE bool bindViewModelInstance(const QString& name);
 
+    // Process-wide font fallback. When a .riv references a font asset
+    // that can't be resolved (no in-band bytes, hosted/referenced fetch
+    // fails), we fall back to bytes from this path so text still
+    // renders. Default is a platform system font (Segoe UI / Helvetica
+    // / DejaVu Sans). Pass a qrc:/ or filesystem path to override.
+    // Pass an empty string to disable the fallback.
+    //
+    // Static so it applies to every RiveView in the process — text in
+    // a .riv shouldn't render different in two views just because of
+    // when one is configured. Call from QML via `RiveView.setFallbackFontPath(...)`.
+    Q_INVOKABLE static void setFallbackFontPath(const QString& path);
+    Q_INVOKABLE static QString fallbackFontPath();
+
     RiveViewModelInstance* viewModel() const { return m_viewModel.get(); }
 
     QSizeF layoutSize() const { return m_layoutSize; }
