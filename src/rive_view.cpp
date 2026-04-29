@@ -5,22 +5,28 @@
 #include "rive/rive_file.h"
 #include "rive/rive_state_machine.h"
 
+#include <QGuiApplication>
 #include <QHoverEvent>
 #include <QKeyEvent>
 #include <QLoggingCategory>
 #include <QMouseEvent>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
+#include <QStyleHints>
 #include <QTouchEvent>
 
 #include <cmath>
 
+#include <rive/animation/linear_animation_instance.hpp>
+#include <rive/animation/state_machine_instance.hpp>
 #include <rive/artboard.hpp>
+#include <rive/file.hpp>
 #include <rive/layout.hpp>
 #include <rive/math/aabb.hpp>
 #include <rive/math/mat2d.hpp>
 #include <rive/math/vec2d.hpp>
 #include <rive/renderer.hpp>
+#include <rive/viewmodel/runtime/viewmodel_runtime.hpp>
 
 Q_LOGGING_CATEGORY(lcRiveView, "rive.view")
 
@@ -144,6 +150,16 @@ void RiveView::setStateMachineName(const QString& name)
     update();
 }
 
+void RiveView::setAnimationName(const QString& name)
+{
+    if (m_animationName == name)
+        return;
+    m_animationName = name;
+    emit animationNameChanged();
+    m_loadRequested = true;
+    update();
+}
+
 void RiveView::setFit(Fit f)
 {
     if (m_fit == f)
@@ -177,6 +193,19 @@ void RiveView::setPlaying(bool playing)
     emit playingChanged();
 }
 
+void RiveView::setSpeed(qreal s)
+{
+    const qreal clamped = s < 0.0 ? 0.0 : s;
+    if (qFuzzyCompare(m_speed, clamped))
+        return;
+    m_speed = clamped;
+    emit speedChanged();
+    // Wake the loop in case the SM had settled — a non-zero speed at
+    // an interesting state may want to keep ticking.
+    m_settled = false;
+    update();
+}
+
 void RiveView::setInputForwarding(bool b)
 {
     if (m_inputForwarding == b)
@@ -195,9 +224,31 @@ QStringList RiveView::stateMachineNames() const
     return m_artboard ? m_artboard->stateMachineNames() : QStringList{};
 }
 
+QStringList RiveView::animationNames() const
+{
+    return m_artboard ? m_artboard->animationNames() : QStringList{};
+}
+
 QStringList RiveView::viewModelNames() const
 {
-    return m_file ? m_file->viewModelNames() : QStringList{};
+    if (!m_file)
+        return {};
+    // Once an artboard is loaded, only expose the VM the editor wired up
+    // for it (plus an empty-string entry to mean "default"). Other VMs in
+    // the file are sub-VMs referenced by typed properties — picking one
+    // of those at the top level binds incompatible data shapes to the
+    // artboard's data binds, which produces bad property reads inside
+    // any attached scripts. Pre-artboard, fall back to the full list so
+    // QML can populate dropdowns before the file finishes loading.
+    if (m_artboard && m_artboard->raw() && m_file->raw())
+    {
+        rive::ViewModelRuntime* vm =
+            m_file->raw()->defaultArtboardViewModel(m_artboard->raw());
+        if (vm)
+            return { QString::fromStdString(vm->name()) };
+        return {};
+    }
+    return m_file->viewModelNames();
 }
 
 void RiveView::setViewModelName(const QString& name)
@@ -301,6 +352,7 @@ void RiveView::onSceneGraphInvalidated()
         m_stateMachine.reset(); // Must die before the artboard.
         emit stateMachineChanged();
     }
+    m_animation.reset(); // Must die before the artboard (refs it).
     if (m_viewModel)
     {
         m_viewModel.reset();
@@ -311,6 +363,7 @@ void RiveView::onSceneGraphInvalidated()
     m_loadedUrl.clear();
     m_loadedArtboardName.clear();
     m_loadedStateMachineName.clear();
+    m_loadedAnimationName.clear();
     m_loadedViewModelName.clear();
     m_loadedViewModelInstanceName.clear();
     m_loadRequested = !m_source.isEmpty();
@@ -328,6 +381,7 @@ void RiveView::rebuildArtboard()
         m_stateMachine.reset();
         emit stateMachineChanged();
     }
+    m_animation.reset();
     m_artboard.reset();
 
     if (!m_file)
@@ -340,12 +394,22 @@ void RiveView::rebuildArtboard()
                              ? QStringLiteral("No default artboard in .riv file")
                              : QStringLiteral("Artboard not found: %1").arg(m_artboardName));
         emit stateMachineNamesChanged();
+        emit animationNamesChanged();
+        emit viewModelNamesChanged();
         return;
     }
     if (m_layoutSize.isValid())
         m_artboard->setSize(m_layoutSize);
     emit stateMachineNamesChanged();
+    emit animationNamesChanged();
+    // Filter VM list now that we know the artboard's default VM.
+    emit viewModelNamesChanged();
     rebuildStateMachine();
+    // Animation fallback only kicks in when there's no SM — the most
+    // common case in older / simpler rivs (e.g. a marketing animation
+    // with a single timeline). With an SM, the SM owns playback.
+    if (!m_stateMachine)
+        rebuildAnimation();
     rebuildViewModel();
 }
 
@@ -450,6 +514,14 @@ void RiveView::rebuildStateMachine()
         emit stateMachineChanged();
 }
 
+void RiveView::rebuildAnimation()
+{
+    m_animation.reset();
+    if (!m_artboard || m_stateMachine)
+        return;
+    m_animation = m_artboard->createAnimation(m_animationName);
+}
+
 void RiveView::tryLoad()
 {
     if (!m_backend || !m_backend->isInitialized())
@@ -464,9 +536,11 @@ void RiveView::tryLoad()
             m_file.reset();
             m_loadedArtboardName.clear();
             m_loadedStateMachineName.clear();
+            m_loadedAnimationName.clear();
             m_loadedViewModelName.clear();
             m_loadedViewModelInstanceName.clear();
             m_stateMachine.reset(); // before m_artboard.reset() below
+            m_animation.reset();
             if (m_viewModel)
             {
                 m_viewModel.reset();
@@ -474,6 +548,8 @@ void RiveView::tryLoad()
             }
             m_artboard.reset();
             emit artboardNamesChanged();
+            emit stateMachineNamesChanged();
+            emit animationNamesChanged();
             emit viewModelNamesChanged();
             return;
         }
@@ -486,6 +562,7 @@ void RiveView::tryLoad()
             emit loadFailed(err);
             m_file.reset();
             m_stateMachine.reset(); // before m_artboard.reset()
+            m_animation.reset();
             m_artboard.reset();
             emit artboardNamesChanged();
             return;
@@ -497,7 +574,7 @@ void RiveView::tryLoad()
         m_loadedArtboardName = QStringLiteral("\x01__force_rebuild__");
     }
 
-    // Artboard change: rebuild the artboard (cascades to SM).
+    // Artboard change: rebuild the artboard (cascades to SM + animation).
     if (m_loadedArtboardName != m_artboardName)
     {
         m_loadedArtboardName = m_artboardName;
@@ -505,6 +582,7 @@ void RiveView::tryLoad()
         // rebuildArtboard recreates the SM with the current
         // m_stateMachineName, so mark it as already-applied.
         m_loadedStateMachineName = m_stateMachineName;
+        m_loadedAnimationName = m_animationName;
         m_frameTimer.restart();
         m_lastAdvanceNs = 0;
         m_settled = false;
@@ -520,17 +598,42 @@ void RiveView::tryLoad()
         // transition guards see the same data.
         if (m_viewModel && m_stateMachine)
             m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+        // Re-evaluate animation fallback in case the new SM name was
+        // empty/unmatched (drop back to animation playback).
+        if (!m_stateMachine)
+            rebuildAnimation();
+        else
+            m_animation.reset();
         m_settled = false;
     }
 
-    // View-model name / preset change: rebuild only the VM, leave
-    // artboard + SM alone.
+    // Animation-only change (no SM, user picked a different timeline).
+    if (!m_stateMachine && m_loadedAnimationName != m_animationName)
+    {
+        m_loadedAnimationName = m_animationName;
+        rebuildAnimation();
+        m_settled = false;
+    }
+
+    // View-model name / preset change: rebind the VM and rebuild the SM
+    // so its scripted objects re-bind against the new VM. Without the SM
+    // rebuild, lua scripts attached to the old SM still hold registry
+    // refs into the previous VM's data, and the next advance() hits a
+    // lua_getfield on a nil self — abort inside Luau (luaG_indexerror →
+    // luaD_throw). Tearing the SM down releases those refs cleanly.
     if (m_loadedViewModelName != m_viewModelName ||
         m_loadedViewModelInstanceName != m_viewModelInstanceName)
     {
         m_loadedViewModelName = m_viewModelName;
         m_loadedViewModelInstanceName = m_viewModelInstanceName;
+        const bool hadSm = m_stateMachine != nullptr;
         rebuildViewModel();
+        if (hadSm)
+        {
+            rebuildStateMachine();
+            if (m_viewModel && m_stateMachine)
+                m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+        }
         m_settled = false;
     }
 }
@@ -592,6 +695,12 @@ void RiveView::mousePressEvent(QMouseEvent* event)
         // make hover and click look like two unrelated pointers and
         // break click-on-hovered-target. Touch events use real ids.
         dispatchPointer(QEvent::MouseButtonPress, event->position(), 0);
+        // Begin drag tracking. We don't fire dragStart yet — that
+        // waits until cursor movement exceeds Qt's startDragDistance
+        // threshold (matches Qt's standard drag-detection convention).
+        m_dragStartPos = event->position();
+        m_dragPending = true;
+        m_dragStarted = false;
         event->accept();
         return;
     }
@@ -602,6 +711,36 @@ void RiveView::mouseMoveEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
+        // If a mouse-down is in flight and the cursor's traveled past
+        // Qt's drag threshold, promote to a drag and notify rive.
+        if (m_dragPending && !m_dragStarted && m_stateMachine &&
+            m_stateMachine->raw())
+        {
+            const qreal threshold = QGuiApplication::styleHints()->startDragDistance();
+            const QPointF delta = event->position() - m_dragStartPos;
+            if (std::hypot(delta.x(), delta.y()) >= threshold)
+            {
+                const QPointF ab = mapToArtboard(m_dragStartPos);
+                m_stateMachine->raw()->dragStart(
+                    rive::Vec2D(static_cast<float>(ab.x()),
+                                static_cast<float>(ab.y())),
+                    /*timeStamp=*/0.0f,
+                    // false: keep pointer events flowing to the SM during
+                    // the drag. With true (the rive default), the SM
+                    // suppresses pointerMove for this pointer once
+                    // dragStart fires, on the assumption that an external
+                    // drag system (e.g. an OS-level QDrag) has taken over
+                    // the cursor. We're driving the drag from the same
+                    // pointer stream Qt is delivering, so we need those
+                    // moves to keep arriving — otherwise the dragged
+                    // element freezes mid-drag and only "catches up" once
+                    // the button is released and hoverMove starts firing.
+                    /*disablePointer=*/false,
+                    /*pointerId=*/0);
+                m_dragStarted = true;
+                m_dragPending = false;
+            }
+        }
         dispatchPointer(QEvent::MouseMove, event->position(), 0);
         event->accept();
         return;
@@ -613,6 +752,19 @@ void RiveView::mouseReleaseEvent(QMouseEvent* event)
 {
     if (m_inputForwarding)
     {
+        // Close out the drag (if one was in progress) before the
+        // pointerUp so rive sees dragEnd → pointerUp ordering.
+        if (m_dragStarted && m_stateMachine && m_stateMachine->raw())
+        {
+            const QPointF ab = mapToArtboard(event->position());
+            m_stateMachine->raw()->dragEnd(
+                rive::Vec2D(static_cast<float>(ab.x()),
+                            static_cast<float>(ab.y())),
+                /*timeStamp=*/0.0f,
+                /*pointerId=*/0);
+        }
+        m_dragPending = false;
+        m_dragStarted = false;
         dispatchPointer(QEvent::MouseButtonRelease, event->position(), 0);
         event->accept();
         return;
@@ -801,10 +953,18 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         const qint64 nowNs = m_frameTimer.nsecsElapsed();
         const qint64 deltaNs = nowNs - m_lastAdvanceNs;
         m_lastAdvanceNs = nowNs;
-        const float delta = std::min(static_cast<float>(deltaNs) * 1e-9f, 0.25f);
+        const float delta = std::min(static_cast<float>(deltaNs) * 1e-9f, 0.25f) *
+                            static_cast<float>(m_speed);
         bool needsMore = true;
         if (m_stateMachine)
             needsMore = m_stateMachine->advance(delta);
+        else if (m_animation)
+        {
+            // advanceAndApply ticks the timeline AND mutates the artboard.
+            // The artboard's own advance() walks layout / data binds;
+            // advanceAndApply does both for us.
+            needsMore = m_animation->advanceAndApply(delta);
+        }
         else if (m_artboard->raw())
             needsMore = m_artboard->raw()->advance(delta);
         // After the SM has stepped (and possibly mutated the VM via

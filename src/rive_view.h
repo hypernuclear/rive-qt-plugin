@@ -39,6 +39,10 @@ class RiveFile;
 class RiveRenderBackend;
 class QSGNode;
 
+namespace rive {
+class LinearAnimationInstance;
+}
+
 class RiveView : public QQuickItem
 {
     Q_OBJECT
@@ -48,8 +52,19 @@ class RiveView : public QQuickItem
     Q_PROPERTY(QString artboard READ artboard WRITE setArtboard NOTIFY artboardChanged)
     Q_PROPERTY(QString stateMachineName READ stateMachineName WRITE setStateMachineName
                    NOTIFY stateMachineNameChanged)
+    // Linear animation playback. Used as a fallback when the artboard
+    // has no state machine (matches rive's web player). Empty name picks
+    // the first animation. Ignored if a state machine is active.
+    Q_PROPERTY(QString animationName READ animationName WRITE setAnimationName
+                   NOTIFY animationNameChanged)
+    Q_PROPERTY(QStringList animationNames READ animationNames NOTIFY animationNamesChanged)
     Q_PROPERTY(Fit fit READ fit WRITE setFit NOTIFY fitChanged)
     Q_PROPERTY(bool playing READ isPlaying WRITE setPlaying NOTIFY playingChanged)
+    // Multiplier on the per-frame deltaSeconds passed to advance().
+    // 1.0 = real time, 0.5 = half speed, 2.0 = double speed, 0.0 =
+    // freeze (advance() called with delta=0; the SM stays in its
+    // current state). Negative values clamp to 0.
+    Q_PROPERTY(qreal speed READ speed WRITE setSpeed NOTIFY speedChanged)
     Q_PROPERTY(bool inputForwarding READ inputForwarding WRITE setInputForwarding
                    NOTIFY inputForwardingChanged)
     Q_PROPERTY(QStringList artboardNames READ artboardNames NOTIFY artboardNamesChanged)
@@ -129,11 +144,18 @@ public:
     QString stateMachineName() const { return m_stateMachineName; }
     void setStateMachineName(const QString& name);
 
+    QString animationName() const { return m_animationName; }
+    void setAnimationName(const QString& name);
+    QStringList animationNames() const;
+
     Fit fit() const { return m_fit; }
     void setFit(Fit f);
 
     bool isPlaying() const { return m_playing; }
     void setPlaying(bool playing);
+
+    qreal speed() const { return m_speed; }
+    void setSpeed(qreal s);
 
     bool inputForwarding() const { return m_inputForwarding; }
     void setInputForwarding(bool b);
@@ -178,8 +200,11 @@ signals:
     void sourceChanged();
     void artboardChanged();
     void stateMachineNameChanged();
+    void animationNameChanged();
+    void animationNamesChanged();
     void fitChanged();
     void playingChanged();
+    void speedChanged();
     void inputForwardingChanged();
     void artboardNamesChanged();
     void stateMachineNamesChanged();
@@ -215,6 +240,10 @@ private:
     void tryLoad();           // on render thread; creates artboard + SM
     void rebuildArtboard();   // called when `artboard` prop changes
     void rebuildStateMachine(); // called when `stateMachineName` prop changes
+    // Build a LinearAnimationInstance for the current animationName.
+    // Only invoked when there's no SM — playback fallback path. Resets
+    // any existing animation. Idempotent.
+    void rebuildAnimation();
     void rebuildViewModel();    // called after artboard/SM rebuild or VM-name prop change
     QPointF mapToArtboard(const QPointF& localPos) const;
     void dispatchPointer(QEvent::Type type, const QPointF& localPos, int pointerId = 0);
@@ -222,11 +251,13 @@ private:
     QUrl m_source;
     QString m_artboardName;          // "" = default
     QString m_stateMachineName;      // "" = default
+    QString m_animationName;         // "" = first animation (fallback path)
     QString m_viewModelName;         // "" = follow the artboard's editor binding
     QString m_viewModelInstanceName; // "" = blank instance / default preset
     QSizeF m_layoutSize;             // invalid = use design-time size
     Fit m_fit = Fit::Contain;
     Alignment m_alignment = Alignment::Center;
+    qreal m_speed = 1.0;
     bool m_playing = true;
     bool m_inputForwarding = true;
     bool m_autoBindViewModel = true;
@@ -235,6 +266,16 @@ private:
 
     QElapsedTimer m_frameTimer;
     qint64 m_lastAdvanceNs = 0;
+
+    // Drag detection (mouse only). When a mouse button is pressed we
+    // capture the position and mark `pending`. Once the cursor moves
+    // beyond Qt's startDragDistance threshold we fire dragStart on the
+    // SM and switch to `started`. mouse-release fires dragEnd if the
+    // drag had started. Touch drags aren't currently mapped — the user
+    // would call dragStart/dragEnd via the runtime directly.
+    QPointF m_dragStartPos;
+    bool m_dragPending = false;
+    bool m_dragStarted = false;
 
     std::unique_ptr<RiveRenderBackend> m_backend;
     bool m_backendReady = false;
@@ -248,6 +289,7 @@ private:
     QUrl m_loadedUrl;
     QString m_loadedArtboardName;
     QString m_loadedStateMachineName;
+    QString m_loadedAnimationName;
 
     // Created on the render thread, so we can't use Qt parenting to
     // RiveView (GUI thread) — Qt refuses cross-thread setParent. Own
@@ -263,6 +305,14 @@ private:
     // and moveToThread'd to RiveView's (GUI) thread so its
     // QQmlPropertyMap inputs map is reachable from QML.
     std::unique_ptr<RiveStateMachine> m_stateMachine;
+
+    // Animation fallback (used only when m_stateMachine is null). Owned
+    // by RiveView; outlives the artboard only as long as we hold the
+    // artboard, since LinearAnimationInstance references it. Declared
+    // after m_stateMachine and before m_artboard's reverse-order dtor —
+    // but we tear it down explicitly whenever the artboard changes, so
+    // the order here only matters for the final RiveView destructor.
+    std::unique_ptr<rive::LinearAnimationInstance> m_animation;
 
     // View model: own as unique_ptr (created on render thread, never
     // re-parented across threads). RiveView holds the canonical

@@ -23,6 +23,7 @@
 
 namespace rive {
 class ArtboardInstance;
+class LinearAnimationInstance;
 class ViewModelInstance;
 }
 
@@ -58,6 +59,18 @@ public:
 
     // State machines defined on this artboard, in declaration order.
     QStringList stateMachineNames() const;
+
+    // Linear animations defined on this artboard, in declaration order.
+    // Used as a playback fallback when the artboard has no state machine
+    // (rive's web player and other runtimes do the same: SM → first
+    // animation → static).
+    QStringList animationNames() const;
+
+    // Instantiate a linear animation. Empty name = first animation.
+    // Returns null if the artboard has no animations or the name doesn't
+    // match. Caller owns the returned instance.
+    std::unique_ptr<rive::LinearAnimationInstance> createAnimation(
+        const QString& name) const;
 
     // Text run mutation. LEGACY: prefer binding a view-model string
     // property to the run in the editor and writing through

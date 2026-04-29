@@ -2,6 +2,7 @@
 #include "rive_key_map.h"
 #include "rive_state_machine.h"
 
+#include <rive/animation/linear_animation_instance.hpp>
 #include <rive/animation/state_machine_instance.hpp>
 #include <rive/artboard.hpp>
 #include <rive/input/focus_manager.hpp>
@@ -82,6 +83,28 @@ QStringList RiveArtboard::stateMachineNames() const
     for (std::size_t i = 0; i < n; ++i)
         out.append(QString::fromStdString(m_artboard->stateMachineNameAt(i)));
     return out;
+}
+
+QStringList RiveArtboard::animationNames() const
+{
+    QStringList out;
+    if (!m_artboard)
+        return out;
+    const std::size_t n = m_artboard->animationCount();
+    out.reserve(static_cast<int>(n));
+    for (std::size_t i = 0; i < n; ++i)
+        out.append(QString::fromStdString(m_artboard->animationNameAt(i)));
+    return out;
+}
+
+std::unique_ptr<rive::LinearAnimationInstance>
+RiveArtboard::createAnimation(const QString& name) const
+{
+    if (!m_artboard || m_artboard->animationCount() == 0)
+        return nullptr;
+    if (name.isEmpty())
+        return m_artboard->animationAt(0);
+    return m_artboard->animationNamed(name.toStdString());
 }
 
 bool RiveArtboard::setTextRun(const QString& name, const QString& value)

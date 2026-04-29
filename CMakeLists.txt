@@ -93,7 +93,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Network)
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -152,6 +152,8 @@ qt_add_qml_module(rive_qt
         src/rive/rive_file.h
         src/rive/rive_key_map.cpp
         src/rive/rive_key_map.h
+        src/rive/rive_qt_asset_loader.cpp
+        src/rive/rive_qt_asset_loader.h
         src/rive/rive_qt_factory.cpp
         src/rive/rive_qt_factory.h
         src/rive/rive_state_machine.cpp
@@ -235,6 +237,7 @@ set_source_files_properties(
     src/rive/rive_artboard.cpp
     src/rive/rive_file.cpp
     src/rive/rive_key_map.cpp
+    src/rive/rive_qt_asset_loader.cpp
     src/rive/rive_qt_factory.cpp
     src/rive/rive_state_machine.cpp
     src/rive/rive_view_model.cpp
@@ -310,6 +313,7 @@ target_link_libraries(rive_qt
         Qt6::Qml
     PRIVATE
         Qt6::GuiPrivate
+        Qt6::Network
         rive
 )
 

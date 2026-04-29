@@ -106,6 +106,38 @@ ApplicationWindow {
                 model: samplesModel
                 onActivated: {
                     rive.source = localPathToFileUrl(currentValue)
+                    urlField.text = ""
+                    artboardSelector.currentIndex = 0
+                    stateMachineSelector.currentIndex = 0
+                    viewModelSelector.currentIndex = 0
+                    viewModelInstanceSelector.currentIndex = 0
+                    rive.artboard = ""
+                    rive.stateMachineName = ""
+                    rive.viewModelName = ""
+                    rive.viewModelInstanceName = ""
+                }
+            }
+
+            // URL loader — exercises RiveFile's http(s) scheme support
+            // (RiveFile::readBytes via QNetworkAccessManager). Paste any
+            // .riv URL and hit Load. Synchronous fetch on the render
+            // thread, so very large .rivs over slow links will stall
+            // briefly. Cleared on Sample selection above.
+            Label { text: qsTr("URL:"); color: "#ddd" }
+            TextField {
+                id: urlField
+                Layout.fillWidth: true
+                Layout.columnSpan: 6
+                placeholderText: qsTr("https://… .riv")
+                color: "#ddd"
+                onAccepted: loadUrlButton.clicked()
+            }
+            Button {
+                id: loadUrlButton
+                text: qsTr("Load")
+                enabled: urlField.text.length > 0
+                onClicked: {
+                    rive.source = Qt.url(urlField.text)
                     artboardSelector.currentIndex = 0
                     stateMachineSelector.currentIndex = 0
                     viewModelSelector.currentIndex = 0
@@ -191,6 +223,28 @@ ApplicationWindow {
             Button {
                 text: rive.playing ? qsTr("Pause") : qsTr("Play")
                 onClicked: rive.playing = !rive.playing
+            }
+
+            // Speed slider — exercises the new RiveView::speed property.
+            // 0 = freeze, 1 = real time, 2 = double-speed.
+            Label { text: qsTr("Speed:"); color: "#ddd" }
+            Slider {
+                Layout.preferredWidth: 120
+                from: 0.0
+                to: 2.0
+                stepSize: 0.1
+                value: rive.speed
+                onMoved: rive.speed = value
+                ToolTip.text: qsTr("0 = freeze, 1 = real time, 2 = 2x")
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+            }
+            Label {
+                text: rive.speed.toFixed(2) + "x"
+                color: "#aaa"
+                font.family: "Menlo"
+                font.pixelSize: 11
+                Layout.preferredWidth: 36
             }
         }
 

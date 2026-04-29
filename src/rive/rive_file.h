@@ -37,6 +37,7 @@
 
 namespace rive {
 class ArtboardInstance;
+class FileAssetLoader;
 class ViewModel;
 class ViewModelInstance;
 }
@@ -94,6 +95,10 @@ private:
     RiveFile();
 
     rive::rcp<rive::File> m_file;
+    // Asset loader — lifetime tied to RiveFile. The runtime keeps a
+    // borrowed FileAssetLoader* internally; we hold the owning rcp so
+    // the loader outlives any in-flight asset decode work.
+    rive::rcp<rive::FileAssetLoader> m_assetLoader;
 };
 
 #endif // RIVE_FILE_H

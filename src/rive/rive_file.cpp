@@ -1,12 +1,18 @@
 #include "rive_file.h"
 #include "rive_artboard.h"
+#include "rive_qt_asset_loader.h"
 
 #include <QByteArray>
+#include <QEventLoop>
 #include <QFile>
+#include <QFileInfo>
 #include <QHash>
 #include <QLoggingCategory>
 #include <QMutex>
 #include <QMutexLocker>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 
 #include <rive/artboard.hpp>
 #include <rive/assets/file_asset.hpp>
@@ -46,6 +52,38 @@ QByteArray RiveFile::readBytes(const QUrl& url, QString* errorOut)
         if (errorOut)
             *errorOut = msg;
     };
+
+    // http(s): synchronous fetch via QNetworkAccessManager + a local
+    // QEventLoop. Blocks the calling thread (typically the render
+    // thread, since RiveView::tryLoad invokes us). For very large
+    // .rivs or slow links, that's a stall — hosts that need async
+    // loading should pre-fetch bytes themselves and call fromBytes()
+    // (out of scope today; can be added if hypershot needs it).
+    if (url.scheme() == QStringLiteral("http") ||
+        url.scheme() == QStringLiteral("https"))
+    {
+        QNetworkAccessManager nam;
+        QNetworkRequest req(url);
+        // Follow redirects so .riv URLs that 301 to a CDN work.
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply* reply = nam.get(req);
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished,
+                         &loop, &QEventLoop::quit);
+        loop.exec();
+        const QByteArray data = reply->readAll();
+        const QNetworkReply::NetworkError err = reply->error();
+        const QString errStr = reply->errorString();
+        reply->deleteLater();
+        if (err != QNetworkReply::NoError)
+        {
+            setError(QStringLiteral("Network fetch %1 failed: %2")
+                         .arg(url.toString(), errStr));
+            return {};
+        }
+        return data;
+    }
 
     QString path;
     if (url.scheme() == QStringLiteral("qrc"))
@@ -108,12 +146,36 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
         return nullptr;
     }
 
+    // Build an asset loader so the runtime can resolve "hosted" /
+    // "referenced" assets (image / font / audio not embedded in the
+    // .riv). Hosted assets fetch from the asset's cdnBaseUrl + uuid;
+    // referenced ones from the directory of the .riv we're loading.
+    QUrl baseUrl;
+    if (url.scheme() == QStringLiteral("http") ||
+        url.scheme() == QStringLiteral("https"))
+    {
+        baseUrl = url.adjusted(QUrl::RemoveFilename);
+    }
+    else if (url.isLocalFile())
+    {
+        baseUrl = QUrl::fromLocalFile(QFileInfo(url.toLocalFile()).absolutePath() +
+                                      QLatin1Char('/'));
+    }
+    else if (url.scheme() == QStringLiteral("qrc"))
+    {
+        // Match qrc-relative resolution: keep everything up to the last '/'.
+        baseUrl = url.adjusted(QUrl::RemoveFilename);
+    }
+    rive::rcp<RiveQtAssetLoader> assetLoader =
+        rive::make_rcp<RiveQtAssetLoader>(baseUrl);
+
     rive::ImportResult result = rive::ImportResult::malformed;
     auto imported = rive::File::import(
         rive::Span<const uint8_t>(reinterpret_cast<const uint8_t*>(bytes.constData()),
                                   static_cast<std::size_t>(bytes.size())),
         factory,
-        &result);
+        &result,
+        assetLoader.get());
     if (result != rive::ImportResult::success || !imported)
     {
         setError(result == rive::ImportResult::unsupportedVersion
@@ -126,6 +188,7 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
     // private — we want RiveFile instances to only come from fromUrl().
     std::shared_ptr<RiveFile> wrapped(new RiveFile(), [](RiveFile* p) { delete p; });
     wrapped->m_file = imported;
+    wrapped->m_assetLoader = assetLoader;
     c.entries.insert(url, wrapped);
 
 #ifdef WITH_RIVE_SCRIPTING
