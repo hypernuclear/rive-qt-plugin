@@ -35,6 +35,41 @@ option(RIVE_QT_WITH_VULKAN
 option(RIVE_QT_WITH_D3D12
     "Build the D3D12 backend (Windows only)" ON)
 
+# Lua/Luau scripting opt-in. Default ON to match every other Rive runtime
+# binding (wasm, react, unity, ios, android, unreal all ship with
+# scripting compiled in). Adds a one-time download of luigi-rosso/luau
+# (Roblox's Lua dialect) + libhydrogen on first build. Set OFF to skip
+# scripting for size-sensitive builds — `.riv` files containing scripts
+# will then load but their scripted listeners/transitions silently no-op.
+option(RIVE_QT_WITH_SCRIPTING
+    "Build the rive runtime with Lua scripting support" ON)
+
+# Audio opt-in. Default ON. We pass --with_rive_audio=system to premake,
+# which enables miniaudio in full playback mode — rive opens the OS
+# audio device directly (WASAPI on Windows, CoreAudio on macOS,
+# ALSA/PulseAudio on Linux) and plays sound effects from .riv files
+# without any host glue code. miniaudio runs alongside Qt's audio fine
+# (modern OS audio APIs are shared-mode). If you'd rather route rive's
+# audio through Qt's stack (e.g. for unified volume control), switch
+# the flag in cmake/BuildRive.cmake from `system` to `external` and
+# wire a custom QAudioSink — out of scope for this default.
+option(RIVE_QT_WITH_AUDIO
+    "Build the rive runtime with audio playback (miniaudio system mode)" ON)
+
+# Rive "tools" mode. Enables features the editor + dev workflows expect:
+#   - scripts can register without a verified Rive signature (so unsigned
+#     dev/test .riv files work), per file.cpp ScriptAsset registration.
+#   - the Luau compiler is built (lets scripts ship as source, not just
+#     pre-compiled signed bytecode).
+#   - libhydrogen runs in full crypto mode rather than verify-only.
+#   - extra editor-side instrumentation hooks across viewmodel + scripted/
+#     paths.
+# Default ON — matches what every other Rive binding ships. Cost is
+# modest (~1-3 MB across the rive lib). Flip OFF for production builds
+# that only consume signed .riv files from a trusted authoring pipeline.
+option(RIVE_QT_WITH_RIVE_TOOLS
+    "Enable rive's tools mode (allows unsigned scripts, builds Luau compiler)" ON)
+
 # ----------------------------------------------------------------------------
 # Qt
 # ----------------------------------------------------------------------------

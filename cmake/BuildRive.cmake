@@ -88,6 +88,46 @@ else()
     set(RIVE_VULKAN_FLAG "")
 endif()
 
+# Scripting opt-in. When ON, pass --with_rive_scripting to premake.
+# Triggers download of luigi-rosso/luau (rive_0_33) + libhydrogen
+# (rive_0_1), turns luau_vm into a real static lib (rather than a
+# dummy stub), and adds WITH_RIVE_SCRIPTING + libhydrogen.c to the rive
+# core lib's compile. Without this flag, scripted listeners and
+# transitions in .riv files silently no-op.
+if(RIVE_QT_WITH_SCRIPTING)
+    set(RIVE_SCRIPTING_FLAG "--with_rive_scripting")
+else()
+    set(RIVE_SCRIPTING_FLAG "")
+endif()
+
+# Rive tools mode. When ON, pass --with_rive_tools to premake. Gated
+# on scripting (tools mode without scripting just adds editor hooks
+# nobody calls). Effects: unsigned scripts in .riv files register
+# normally instead of being silently dropped at runtime; libhydrogen
+# is compiled with full crypto rather than verify-only; the Luau
+# compiler is built (luau_compiler.lib) so source-form scripts work.
+if(RIVE_QT_WITH_SCRIPTING AND RIVE_QT_WITH_RIVE_TOOLS)
+    set(RIVE_TOOLS_FLAG "--with_rive_tools")
+else()
+    set(RIVE_TOOLS_FLAG "")
+endif()
+
+# Audio. When ON, pass --with_rive_audio=system to premake. `system`
+# enables miniaudio in full playback mode — rive opens the OS audio
+# device (WASAPI on Windows, CoreAudio on macOS, ALSA/PulseAudio on
+# Linux) and plays sound effects from .riv files directly. The
+# alternative `external` mode compiles miniaudio with MA_NO_DEVICE_IO
+# (decode only, no playback); use that when the host wants to route
+# rive's PCM through its own audio stack (e.g. Qt's QAudioSink) rather
+# than miniaudio's. We default to `system` since the common case is
+# "designer adds a sound effect to a Rive button click" and `system`
+# Just Works without glue code.
+if(RIVE_QT_WITH_AUDIO)
+    set(RIVE_AUDIO_FLAG "--with_rive_audio=system")
+else()
+    set(RIVE_AUDIO_FLAG "")
+endif()
+
 # Generated wrapper premake file. build_rive.sh expects a premake5.lua in
 # the working directory; upstream's root has premake5_v2.lua instead. The
 # wrapper just resolves the submodule path and dofiles into upstream.
@@ -116,7 +156,6 @@ else()
 endif()
 
 # Static libs produced by the rive build that we consume.
-# Note: libluau_vm.a is a stub (scripting disabled) — not linked.
 if(WIN32)
     set(_rive_lib_prefix "")
     set(_rive_lib_suffix ".lib")
@@ -142,6 +181,15 @@ set(RIVE_ALL_LIBS
 if(APPLE OR WIN32)
     set(RIVE_PLS_RENDERER "${RIVE_OUT_DIR}/${_rive_lib_prefix}rive_pls_renderer${_rive_lib_suffix}")
     list(APPEND RIVE_ALL_LIBS "${RIVE_PLS_RENDERER}")
+endif()
+
+# luau_vm: real static lib when --with_rive_scripting is on (else it's
+# a dummy.cpp stub built unconditionally and not linked). libhydrogen
+# is compiled into the rive core lib directly (premake5_v2.lua line
+# 163-165), so no separate lib to link there.
+if(RIVE_QT_WITH_SCRIPTING)
+    set(RIVE_LUAU_VM "${RIVE_OUT_DIR}/${_rive_lib_prefix}luau_vm${_rive_lib_suffix}")
+    list(APPEND RIVE_ALL_LIBS "${RIVE_LUAU_VM}")
 endif()
 
 # Wrapper script. Two reasons we need one:
@@ -193,7 +241,7 @@ if(WIN32)
 "# change (e.g. flipping the CRT flag, toggling decoders) should just\n"
 "# rebuild. Wipe if any expected flag is missing so build_rive.sh\n"
 "# reconfigures cleanly.\n"
-"$expectedFlags = @('${RIVE_WINDOWS_RUNTIME_FLAG}', '--no-rive-decoders', '${RIVE_VULKAN_FLAG}')\n"
+"$expectedFlags = @('${RIVE_WINDOWS_RUNTIME_FLAG}', '--no-rive-decoders', '${RIVE_VULKAN_FLAG}', '${RIVE_SCRIPTING_FLAG}', '${RIVE_TOOLS_FLAG}', '${RIVE_AUDIO_FLAG}')\n"
 "$argsFile = Join-Path $out '.rive_premake_args'\n"
 "if (Test-Path $argsFile) {\n"
 "    $existing = Get-Content -Raw -LiteralPath $argsFile\n"
@@ -456,7 +504,7 @@ if(WIN32)
 "# 0. Drive success off $LASTEXITCODE instead.\n"
 "$prevPref = $ErrorActionPreference\n"
 "$ErrorActionPreference = 'Continue'\n"
-"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' 2>&1\n"
+"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
 "$riveExit = $LASTEXITCODE\n"
 "$ErrorActionPreference = $prevPref\n"
 "\n"
@@ -467,7 +515,7 @@ if(WIN32)
 "    Write-Host '=== rive script failed. Re-running premake5 directly for diagnostics ==='\n"
 "    $pm = Join-Path $installDir 'premake5.exe'\n"
 "    if (Test-Path $pm) {\n"
-"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' 2>&1\n"
+"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
 "        Write-Host \"=== premake5 standalone exit: $LASTEXITCODE ===\"\n"
 "    }\n"
 "}\n"
@@ -484,6 +532,15 @@ else()
     endif()
     if(RIVE_VULKAN_FLAG)
         set(_rive_extra_args "${_rive_extra_args} ${RIVE_VULKAN_FLAG}")
+    endif()
+    if(RIVE_SCRIPTING_FLAG)
+        set(_rive_extra_args "${_rive_extra_args} ${RIVE_SCRIPTING_FLAG}")
+    endif()
+    if(RIVE_TOOLS_FLAG)
+        set(_rive_extra_args "${_rive_extra_args} ${RIVE_TOOLS_FLAG}")
+    endif()
+    if(RIVE_AUDIO_FLAG)
+        set(_rive_extra_args "${_rive_extra_args} ${RIVE_AUDIO_FLAG}")
     endif()
     file(WRITE "${RIVE_BUILD_WRAPPER}"
 "#!/bin/bash\n"
@@ -527,14 +584,43 @@ else()
     set(RIVE_BUILD_CMD "${RIVE_BUILD_WRAPPER}")
 endif()
 
+# Track rive's source tree so cmake/ninja re-invokes the build wrapper
+# when any rive .cpp/.hpp/.h/.mm file changes. Without this, edits to
+# the vendored rive sources (whether for local debugging or applying
+# upstream patches) get silently ignored — the .lib file's mtime
+# satisfies ninja's up-to-date check, the wrapper never runs, msbuild
+# is never asked to look at the source delta. CONFIGURE_DEPENDS makes
+# CMake re-glob each build so a newly-added file picks up automatically.
+file(GLOB_RECURSE _rive_src_files CONFIGURE_DEPENDS
+    "${RIVE_RUNTIME_DIR}/src/*.cpp"
+    "${RIVE_RUNTIME_DIR}/src/*.hpp"
+    "${RIVE_RUNTIME_DIR}/src/*.h"
+    "${RIVE_RUNTIME_DIR}/src/*.mm"
+    "${RIVE_RUNTIME_DIR}/include/*.hpp"
+    "${RIVE_RUNTIME_DIR}/include/*.h"
+    "${RIVE_RUNTIME_DIR}/renderer/src/*.cpp"
+    "${RIVE_RUNTIME_DIR}/renderer/src/*.hpp"
+    "${RIVE_RUNTIME_DIR}/renderer/src/*.h"
+    "${RIVE_RUNTIME_DIR}/renderer/src/*.mm"
+    "${RIVE_RUNTIME_DIR}/renderer/include/*.hpp"
+    "${RIVE_RUNTIME_DIR}/renderer/include/*.h"
+)
+
 # Custom build step. BYPRODUCTS is what lets downstream targets take a file
 # dependency on the libs (OUTPUT-only wouldn't, because the wrapper premake
 # file is regenerated on every configure).
+#
+# DEPENDS lists every rive source file (globbed above) plus the wrapper.
+# When any of them changes, ninja re-runs the wrapper, which delegates to
+# msbuild on Windows / make on Unix — both do their own incremental
+# compilation, so the rebuild only touches the changed TUs. Steady-state
+# overhead when nothing changed: ninja stat call per source (~milliseconds),
+# wrapper not invoked.
 add_custom_command(
     OUTPUT ${RIVE_ALL_LIBS}
     COMMAND ${RIVE_BUILD_CMD}
     WORKING_DIRECTORY "${RIVE_BUILD_DIR}"
-    DEPENDS "${RIVE_PREMAKE_WRAPPER}"
+    DEPENDS "${RIVE_PREMAKE_WRAPPER}" ${_rive_src_files}
     COMMENT "Building rive-runtime (first build ~30-60s, then incremental)"
     VERBATIM
 )
@@ -587,6 +673,30 @@ if(RIVE_QT_WITH_VULKAN)
     target_compile_definitions(rive INTERFACE RIVE_VULKAN VK_NO_PROTOTYPES)
 endif()
 
+# Scripting: Rive's File / StateMachineInstance / etc. headers gate
+# their scripting member declarations on WITH_RIVE_SCRIPTING. Consumers
+# (RiveFile, RiveStateMachine wrappers) need to see the same gate the
+# runtime was compiled with so member offsets and ABI match.
+if(RIVE_QT_WITH_SCRIPTING)
+    target_compile_definitions(rive INTERFACE WITH_RIVE_SCRIPTING)
+endif()
+
+# Tools mode: same ABI-match concern. Runtime compiles a different
+# member layout for ViewModelInstance* and friends when WITH_RIVE_TOOLS
+# is on (extra observation hooks); consumers must agree.
+if(RIVE_QT_WITH_SCRIPTING AND RIVE_QT_WITH_RIVE_TOOLS)
+    target_compile_definitions(rive INTERFACE WITH_RIVE_TOOLS)
+endif()
+
+# Audio: rive's headers gate audio component types and state-machine
+# input wiring on WITH_RIVE_AUDIO. Consumers must see the same gate so
+# any audio-aware codepath compiles consistently. Required for .riv
+# files containing audio (rive engine drops audio assets at import
+# without this define).
+if(RIVE_QT_WITH_AUDIO)
+    target_compile_definitions(rive INTERFACE WITH_RIVE_AUDIO)
+endif()
+
 # Windows: PLS uses D3D11 + DXGI; D3DCompiler is needed for runtime
 # shader compilation (rive's premake build emits HLSL shaders that the
 # pipeline manager compiles on first use). opengl32 covers the GL
@@ -606,14 +716,14 @@ if(WIN32)
     # D3D12 backend pulls in <d3dx12.h>. The Microsoft DirectX-Headers
     # repo ships these under `directx/` but Rive includes `<d3dx12.h>`
     # at the top level — premake downloads the headers into
-    # dependencies/microsoft_DirectX-Headers_v<ver>/include/directx/ on
-    # first build, so we add that directory to the include path. Glob
-    # since the version suffix may change with runtime updates.
-    file(GLOB _rive_dx_headers_dirs
-        "${RIVE_BUILD_DIR}/dependencies/microsoft_DirectX-Headers_*/include/directx")
-    if(_rive_dx_headers_dirs)
-        target_include_directories(rive INTERFACE ${_rive_dx_headers_dirs})
-    endif()
+    # dependencies/microsoft_DirectX-Headers_<tag>/include/directx/ on
+    # first build. Hardcode the tag (matches Vulkan-Headers pattern):
+    # using GLOB at configure time misses fresh build dirs where rive
+    # hasn't run yet, so the include path goes unrecorded. Tag pinned
+    # in renderer/premake5_pls_renderer.lua. Bump when rive bumps it.
+    set(RIVE_DX_HEADERS_DIR
+        "${RIVE_BUILD_DIR}/dependencies/microsoft_DirectX-Headers_v1.615.0/include/directx")
+    target_include_directories(rive INTERFACE "${RIVE_DX_HEADERS_DIR}")
 endif()
 
 # Linux: GL backend needs libGL. Apple GL on macOS comes via Qt's link

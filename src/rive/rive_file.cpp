@@ -4,12 +4,20 @@
 #include <QByteArray>
 #include <QFile>
 #include <QHash>
+#include <QLoggingCategory>
 #include <QMutex>
 #include <QMutexLocker>
 
 #include <rive/artboard.hpp>
+#include <rive/assets/file_asset.hpp>
 #include <rive/viewmodel/viewmodel.hpp>
 #include <rive/viewmodel/viewmodel_instance.hpp>
+
+#ifdef WITH_RIVE_SCRIPTING
+#include <rive/assets/script_asset.hpp>
+#endif
+
+Q_LOGGING_CATEGORY(lcRiveFile, "rive.file")
 
 namespace {
 
@@ -119,6 +127,34 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
     std::shared_ptr<RiveFile> wrapped(new RiveFile(), [](RiveFile* p) { delete p; });
     wrapped->m_file = imported;
     c.entries.insert(url, wrapped);
+
+#ifdef WITH_RIVE_SCRIPTING
+    // Diagnostic: enumerate script assets so we can see what got
+    // registered and what didn't. Walks the file's assets looking for
+    // ScriptAsset entries; for each, logs name + isModule + verified
+    // + bytecode size. Useful for diagnosing "require could not find
+    // a script named X" errors.
+    {
+        int scriptCount = 0;
+        for (const rive::rcp<rive::FileAsset>& asset : imported->assets())
+        {
+            if (!asset || !asset->is<rive::ScriptAsset>())
+                continue;
+            auto* sa = asset->as<rive::ScriptAsset>();
+            ++scriptCount;
+            qCInfo(lcRiveFile)
+                << "script asset:"
+                << "name=" << QString::fromStdString(sa->name())
+                << "folder=" << QString::fromStdString(sa->folderPath())
+                << "isModule=" << sa->isModule()
+                << "verified=" << sa->verified()
+                << "bytecodeBytes=" << static_cast<int>(sa->moduleBytecode().size());
+        }
+        if (scriptCount > 0)
+            qCInfo(lcRiveFile) << "loaded" << scriptCount << "script asset(s)";
+    }
+#endif
+
     return wrapped;
 }
 
