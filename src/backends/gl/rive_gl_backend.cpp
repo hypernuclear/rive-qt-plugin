@@ -48,10 +48,23 @@
 #include <rive/artboard.hpp>
 #include <rive/layout.hpp>
 #include <rive/math/aabb.hpp>
+// Rive's GL renderer transitively includes glad/gles2.h, which defines
+// GL_INVALID_INDEX / GL_TIMEOUT_IGNORED unconditionally. Qt's
+// qopenglext.h (pulled in above via QOpenGLContext / qrhi.h) defines
+// them first to the same numeric values, so MSVC's C4005 fires on the
+// glad redefine. The values are identical — silence the noise around
+// the rive includes only.
+#if defined(_MSC_VER)
+#pragma warning(push)
+#pragma warning(disable : 4005)
+#endif
 #include <rive/renderer/gl/render_context_gl_impl.hpp>
 #include <rive/renderer/gl/render_target_gl.hpp>
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>
+#if defined(_MSC_VER)
+#pragma warning(pop)
+#endif
 
 Q_LOGGING_CATEGORY(lcRiveGLBackend, "rive.gl.backend")
 
