@@ -1,0 +1,44 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 21
+    },
+    "configurePresets": [
+        {
+            "name": "default",
+            "displayName": "Default (Ninja)",
+            "description": "Single-config Ninja build. Pass -DCMAKE_PREFIX_PATH=/path/to/Qt/<ver>/<platform> on the command line (or let your Qt kit's toolchain file supply it).",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
+            }
+        },
+        {
+            "name": "release",
+            "displayName": "Release (Ninja)",
+            "description": "Optimized single-config Ninja build.",
+            "inherits": "default",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "viewer",
+            "displayName": "Standalone viewer",
+            "configurePreset": "default",
+            "targets": [
+                "rive_viewer"
+            ]
+        },
+        {
+            "name": "all",
+            "displayName": "Everything",
+            "configurePreset": "default"
+        }
+    ]
+}
