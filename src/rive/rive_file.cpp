@@ -111,6 +111,36 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
                                             rive::Factory* factory,
                                             QString* errorOut)
 {
+    // Fast path: serve a live cache entry without doing any IO.
+    {
+        auto& c = cache();
+        QMutexLocker lock(&c.mutex);
+        if (auto it = c.entries.find(url); it != c.entries.end())
+        {
+            if (auto existing = it->lock())
+                return existing;
+            c.entries.erase(it);
+        }
+    }
+
+    // Cache miss — read the bytes (blocks for http(s)) and import. The
+    // double-check against the cache happens inside fromBytes().
+    QString readErr;
+    const QByteArray bytes = readBytes(url, &readErr);
+    if (bytes.isEmpty())
+    {
+        if (errorOut)
+            *errorOut = readErr;
+        return nullptr;
+    }
+    return fromBytes(url, bytes, factory, errorOut);
+}
+
+std::shared_ptr<RiveFile> RiveFile::fromBytes(const QUrl& url,
+                                              const QByteArray& bytes,
+                                              rive::Factory* factory,
+                                              QString* errorOut)
+{
     auto setError = [&](const QString& msg) {
         if (errorOut)
             *errorOut = msg;
@@ -118,32 +148,30 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
 
     if (url.isEmpty())
     {
-        setError(QStringLiteral("RiveFile::fromUrl: empty URL"));
+        setError(QStringLiteral("RiveFile::fromBytes: empty URL"));
         return nullptr;
     }
     if (!factory)
     {
-        setError(QStringLiteral("RiveFile::fromUrl: null factory"));
+        setError(QStringLiteral("RiveFile::fromBytes: null factory"));
+        return nullptr;
+    }
+    if (bytes.isEmpty())
+    {
+        setError(QStringLiteral("RiveFile::fromBytes: empty .riv data"));
         return nullptr;
     }
 
     auto& c = cache();
     QMutexLocker lock(&c.mutex);
 
-    // Cache hit (still alive).
+    // Cache hit (still alive) — another view already decoded this URL;
+    // reuse it and discard the bytes we were handed.
     if (auto it = c.entries.find(url); it != c.entries.end())
     {
         if (auto existing = it->lock())
             return existing;
         c.entries.erase(it);
-    }
-
-    QString readErr;
-    const QByteArray bytes = readBytes(url, &readErr);
-    if (bytes.isEmpty())
-    {
-        setError(readErr);
-        return nullptr;
     }
 
     // Build an asset loader so the runtime can resolve "hosted" /
@@ -223,6 +251,7 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
 
 QStringList RiveFile::artboardNames() const
 {
+    QMutexLocker lock(&m_instanceMutex);
     QStringList out;
     if (!m_file)
         return out;
@@ -235,11 +264,13 @@ QStringList RiveFile::artboardNames() const
 
 int RiveFile::artboardCount() const
 {
+    QMutexLocker lock(&m_instanceMutex);
     return m_file ? static_cast<int>(m_file->artboardCount()) : 0;
 }
 
 std::unique_ptr<RiveArtboard> RiveFile::createArtboard(const QString& name) const
 {
+    QMutexLocker lock(&m_instanceMutex);
     if (!m_file)
         return nullptr;
     std::unique_ptr<rive::ArtboardInstance> instance;
@@ -266,6 +297,7 @@ rive::File* RiveFile::raw() const
 
 QStringList RiveFile::viewModelNames() const
 {
+    QMutexLocker lock(&m_instanceMutex);
     QStringList out;
     if (!m_file)
         return out;
@@ -281,6 +313,7 @@ QStringList RiveFile::viewModelNames() const
 
 int RiveFile::viewModelCount() const
 {
+    QMutexLocker lock(&m_instanceMutex);
     return m_file ? static_cast<int>(m_file->viewModelCount()) : 0;
 }
 
@@ -289,6 +322,7 @@ RiveFile::createViewModelInstance(rive::ArtboardInstance* artboard,
                                   const QString& viewModelName,
                                   const QString& instanceName) const
 {
+    QMutexLocker lock(&m_instanceMutex);
     if (!m_file)
         return nullptr;
 

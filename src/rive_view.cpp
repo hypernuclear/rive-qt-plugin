@@ -11,6 +11,9 @@
 #include <QKeyEvent>
 #include <QLoggingCategory>
 #include <QMouseEvent>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
 #include <QStyleHints>
@@ -125,8 +128,101 @@ void RiveView::setSource(const QUrl& url)
         return;
     m_source = url;
     emit sourceChanged();
+    // Kick off byte acquisition on the GUI thread *now*, before the next
+    // paint. For http(s) this returns immediately (async); for qrc/file
+    // the bytes are ready synchronously by the time tryLoad() runs.
+    beginSourceFetch();
     requestLoad();
     update();
+}
+
+void RiveView::beginSourceFetch()
+{
+    m_sourceBytesReady = false;
+    m_sourceFetchError.clear();
+    m_sourceBytes.clear();
+
+    // Cancel any in-flight fetch from a previous source. Detach our slot
+    // first so the abort()-driven finished() doesn't re-enter us.
+    if (m_sourceReply)
+    {
+        QNetworkReply* old = m_sourceReply;
+        m_sourceReply = nullptr;
+        old->disconnect(this);
+        old->abort();
+        old->deleteLater();
+    }
+
+    if (m_source.isEmpty())
+        return;
+
+    const QString scheme = m_source.scheme();
+    if (scheme == QStringLiteral("http") || scheme == QStringLiteral("https"))
+    {
+        if (!m_nam)
+            m_nam = new QNetworkAccessManager(this);
+        QNetworkRequest req(m_source);
+        // Follow redirects so .riv URLs that 301 to a CDN work.
+        req.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                         QNetworkRequest::NoLessSafeRedirectPolicy);
+        QNetworkReply* reply = m_nam->get(req);
+        m_sourceReply = reply;
+        const QUrl fetchUrl = m_source;
+        connect(reply, &QNetworkReply::finished, this, [this, reply, fetchUrl]() {
+            reply->deleteLater();
+            // Superseded by a newer setSource()? Ignore this stale reply.
+            if (m_sourceReply != reply)
+                return;
+            m_sourceReply = nullptr;
+            if (reply->error() != QNetworkReply::NoError)
+            {
+                m_sourceFetchError = QStringLiteral("Network fetch %1 failed: %2")
+                                         .arg(fetchUrl.toString(), reply->errorString());
+                qCWarning(lcRiveView) << m_sourceFetchError;
+            }
+            else
+            {
+                m_sourceBytes = reply->readAll();
+                m_sourceBytesReady = !m_sourceBytes.isEmpty();
+                if (!m_sourceBytesReady)
+                    m_sourceFetchError =
+                        QStringLiteral("Network fetch %1 returned no data")
+                            .arg(fetchUrl.toString());
+            }
+            // Re-drive the load now that bytes (or an error) are in hand.
+            requestLoad();
+            update();
+        });
+        return;
+    }
+
+    // qrc / file / resource-path: cheap, bounded read — do it inline on the
+    // GUI thread. Never reaches the render thread.
+    QString err;
+    m_sourceBytes = RiveFile::readBytes(m_source, &err);
+    if (m_sourceBytes.isEmpty())
+    {
+        m_sourceFetchError = err.isEmpty()
+                                 ? QStringLiteral("Empty .riv: %1").arg(m_source.toString())
+                                 : err;
+        qCWarning(lcRiveView) << m_sourceFetchError;
+        return;
+    }
+    m_sourceBytesReady = true;
+}
+
+void RiveView::clearLoadedContent()
+{
+    m_stateMachine.reset(); // before m_artboard (SM touches the artboard on dtor)
+    m_animation.reset();
+    if (m_viewModel)
+    {
+        m_viewModel.reset();
+        emit viewModelChanged();
+    }
+    m_artboard.reset();
+    m_file.reset();
+    emit artboardNamesChanged();
 }
 
 void RiveView::setArtboard(const QString& name)
@@ -541,41 +637,49 @@ void RiveView::tryLoad()
     // Source change: reload the file (and cascade — new artboard + SM).
     if (m_loadedUrl != m_source)
     {
-        m_loadedUrl = m_source;
+        // Empty source: clear everything and commit.
         if (m_source.isEmpty())
         {
-            m_file.reset();
+            m_loadedUrl = m_source;
             m_loadedArtboardName.clear();
             m_loadedStateMachineName.clear();
             m_loadedAnimationName.clear();
             m_loadedViewModelName.clear();
             m_loadedViewModelInstanceName.clear();
-            m_stateMachine.reset(); // before m_artboard.reset() below
-            m_animation.reset();
-            if (m_viewModel)
-            {
-                m_viewModel.reset();
-                emit viewModelChanged();
-            }
-            m_artboard.reset();
-            emit artboardNamesChanged();
+            clearLoadedContent();
             emit stateMachineNamesChanged();
             emit animationNamesChanged();
             emit viewModelNamesChanged();
             return;
         }
 
+        // The GUI-thread fetch (beginSourceFetch) errored: report + blank,
+        // and commit m_loadedUrl so we don't re-enter every frame.
+        if (!m_sourceFetchError.isEmpty())
+        {
+            m_loadedUrl = m_source;
+            qCWarning(lcRiveView) << "Load failed:" << m_sourceFetchError;
+            emit loadFailed(m_sourceFetchError);
+            clearLoadedContent();
+            return;
+        }
+
+        // Bytes not ready yet (async http still in flight). Do NOT commit
+        // m_loadedUrl — the fetch's finished() callback requestLoad()s us
+        // again once the bytes (or an error) arrive, and we retry then.
+        if (!m_sourceBytesReady)
+            return;
+
+        m_loadedUrl = m_source;
         QString err;
-        auto file = RiveFile::fromUrl(m_source, m_backend->factory(), &err);
+        // Import from the already-fetched bytes — no IO on the render thread.
+        auto file =
+            RiveFile::fromBytes(m_source, m_sourceBytes, m_backend->factory(), &err);
         if (!file)
         {
             qCWarning(lcRiveView) << "Load failed:" << err;
             emit loadFailed(err);
-            m_file.reset();
-            m_stateMachine.reset(); // before m_artboard.reset()
-            m_animation.reset();
-            m_artboard.reset();
-            emit artboardNamesChanged();
+            clearLoadedContent();
             return;
         }
         m_file = std::move(file);

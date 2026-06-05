@@ -15,9 +15,22 @@
 // shared_ptr, the cache entry's weak_ptr expires and the next fromUrl()
 // call re-decodes fresh.
 //
-// Threading: fromUrl takes a lock. Artboard creation doesn't — rive's
-// File is safe to read concurrently for artboard instantiation (each
-// instance gets its own copy of the artboard tree).
+// Threading: the process-wide cache is mutex-guarded, and every method
+// that mints instances or enumerates the file (createArtboard,
+// createViewModelInstance, artboardNames, viewModelNames, ...) takes a
+// per-file lock. This matters because RiveFile is shared across views by
+// URL: two RiveViews in *different* windows run on *different* render
+// threads, and rive's File mints instances by bumping non-atomic rcp
+// refcounts on shared assets — concurrent instancing without the lock
+// would corrupt those counts. The lock serializes that cross-window
+// minting (within one window the scene-graph sync barrier already
+// serializes access).
+//
+// `raw()` hands out the bare rive::File* and is NOT covered by the lock —
+// callers (the VM property wrappers resolving assets) must only touch it
+// from their own window's render thread. Cross-window concurrent use of
+// raw() is the one remaining unguarded path; revisit if a view-model
+// genuinely needs to share a file across windows.
 //
 // Factory caveat (phase 1): the rive::Factory passed in is typically
 // the backend-specific RenderContext. If two views share a URL but use
@@ -27,6 +40,8 @@
 // If we add a second backend we'll need to key the cache on (url,
 // factory-identity).
 
+#include <QByteArray>
+#include <QMutex>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -52,14 +67,26 @@ public:
     RiveFile(const RiveFile&) = delete;
     RiveFile& operator=(const RiveFile&) = delete;
 
-    // Load (or retrieve cached). errorOut populated on failure.
+    // Load (or retrieve cached). errorOut populated on failure. Reads the
+    // bytes itself via readBytes() — which BLOCKS for http(s) sources, so
+    // do not call this from the render thread for a remote URL. Render-path
+    // callers fetch bytes off-thread and use fromBytes() instead.
     static std::shared_ptr<RiveFile> fromUrl(const QUrl& url,
                                              rive::Factory* factory,
                                              QString* errorOut);
 
-    // Read .riv bytes from a qrc:// or file:// URL. Other schemes are
-    // rejected. Exposed publicly so callers (e.g. tests) can preload
-    // without going through the cache.
+    // Import (or retrieve cached) from already-fetched bytes. No IO — the
+    // caller is responsible for acquiring `bytes` (off the render thread
+    // for remote sources). `url` is still required: it keys the cache and
+    // anchors relative asset resolution. errorOut populated on failure.
+    static std::shared_ptr<RiveFile> fromBytes(const QUrl& url,
+                                               const QByteArray& bytes,
+                                               rive::Factory* factory,
+                                               QString* errorOut);
+
+    // Read .riv bytes from a qrc:// or file:// URL (and, blocking, http(s)).
+    // Exposed publicly so callers (e.g. tests, or RiveView's GUI-thread
+    // fetch) can preload without going through the cache.
     static QByteArray readBytes(const QUrl& url, QString* errorOut);
 
     QStringList artboardNames() const;
@@ -99,6 +126,10 @@ private:
     // borrowed FileAssetLoader* internally; we hold the owning rcp so
     // the loader outlives any in-flight asset decode work.
     rive::rcp<rive::FileAssetLoader> m_assetLoader;
+    // Serializes instancing/enumeration against m_file so two render
+    // threads (distinct windows) sharing this file can't race on rive's
+    // non-atomic refcounts. See the threading note at the top of the file.
+    mutable QMutex m_instanceMutex;
 };
 
 #endif // RIVE_FILE_H

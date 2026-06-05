@@ -38,6 +38,8 @@
 class RiveFile;
 class RiveRenderBackend;
 class QSGNode;
+class QNetworkAccessManager;
+class QNetworkReply;
 
 namespace rive {
 class LinearAnimationInstance;
@@ -250,6 +252,14 @@ private slots:
 
 private:
     void requestLoad();
+    // Acquire the .riv bytes for m_source on the GUI thread so the render
+    // thread never blocks on IO. qrc/file are read synchronously (fast,
+    // bounded); http(s) is fetched asynchronously via QNetworkAccessManager
+    // and requestLoad()'d when the reply lands. Populates m_sourceBytes /
+    // m_sourceBytesReady (or m_sourceFetchError on failure).
+    void beginSourceFetch();
+    // Drop the decoded file + artboard/SM/VM (load failed or source empty).
+    void clearLoadedContent();
     void tryLoad();           // on render thread; creates artboard + SM
     void rebuildArtboard();   // called when `artboard` prop changes
     void rebuildStateMachine(); // called when `stateMachineName` prop changes
@@ -276,6 +286,17 @@ private:
     bool m_autoBindViewModel = true;
     bool m_settled = false;
     bool m_loadRequested = false;
+
+    // Source bytes fetched on the GUI thread (see beginSourceFetch). Held
+    // for the lifetime of the source — not freed after import — so the
+    // file can be re-decoded after a scene-graph invalidation drops the
+    // cached RiveFile, without re-hitting the network/disk. m_sourceReply
+    // is the in-flight http fetch (null otherwise).
+    QByteArray m_sourceBytes;
+    bool m_sourceBytesReady = false;
+    QString m_sourceFetchError;       // set when the GUI-thread fetch failed
+    QNetworkAccessManager* m_nam = nullptr;   // lazily created, parented to this
+    QPointer<QNetworkReply> m_sourceReply;
 
     QElapsedTimer m_frameTimer;
     qint64 m_lastAdvanceNs = 0;
