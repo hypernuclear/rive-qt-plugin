@@ -223,6 +223,7 @@ void RiveView::clearLoadedContent()
     m_artboard.reset();
     m_file.reset();
     emit artboardNamesChanged();
+    refreshTimelineMeta();
 }
 
 void RiveView::setArtboard(const QString& name)
@@ -243,6 +244,16 @@ void RiveView::setStateMachineName(const QString& name)
         return;
     m_stateMachineName = name;
     emit stateMachineNameChanged();
+    m_loadRequested = true;
+    update();
+}
+
+void RiveView::setPlaybackMode(PlaybackMode mode)
+{
+    if (m_playbackMode == mode)
+        return;
+    m_playbackMode = mode;
+    emit playbackModeChanged();
     m_loadRequested = true;
     update();
 }
@@ -475,6 +486,17 @@ void RiveView::onSceneGraphInvalidated()
     m_loadedViewModelInstanceName.clear();
     m_loadRequested = !m_source.isEmpty();
     m_settled = false;
+    refreshTimelineMeta(); // animation gone — zero the timeline until reload
+}
+
+void RiveView::teardownStateMachine()
+{
+    if (m_stateMachine)
+    {
+        m_stateMachine->disconnect(this);
+        m_stateMachine.reset();
+        emit stateMachineChanged();
+    }
 }
 
 void RiveView::rebuildArtboard()
@@ -482,17 +504,15 @@ void RiveView::rebuildArtboard()
     // SM must die before the artboard — it holds a rive::ArtboardInstance
     // ref via its rive::StateMachineInstance and touches it during
     // destruction (cleanupFocusTree).
-    if (m_stateMachine)
-    {
-        m_stateMachine->disconnect(this);
-        m_stateMachine.reset();
-        emit stateMachineChanged();
-    }
+    teardownStateMachine();
     m_animation.reset();
     m_artboard.reset();
 
     if (!m_file)
+    {
+        refreshTimelineMeta();
         return;
+    }
 
     m_artboard = m_file->createArtboard(m_artboardName);
     if (!m_artboard)
@@ -503,6 +523,7 @@ void RiveView::rebuildArtboard()
         emit stateMachineNamesChanged();
         emit animationNamesChanged();
         emit viewModelNamesChanged();
+        refreshTimelineMeta();
         return;
     }
     if (m_layoutSize.isValid())
@@ -511,12 +532,36 @@ void RiveView::rebuildArtboard()
     emit animationNamesChanged();
     // Filter VM list now that we know the artboard's default VM.
     emit viewModelNamesChanged();
-    rebuildStateMachine();
-    // Animation fallback only kicks in when there's no SM — the most
-    // common case in older / simpler rivs (e.g. a marketing animation
-    // with a single timeline). With an SM, the SM owns playback.
-    if (!m_stateMachine)
-        rebuildAnimation();
+    // Honor the explicit playback-mode override. Auto reproduces the
+    // historic SM-first-then-animation-fallback behavior; Animation forces
+    // the linear timeline (scrubbable); StateMachine never falls back to an
+    // animation. refreshTimelineMeta() runs on every branch.
+    switch (m_playbackMode)
+    {
+    case PlaybackMode::Animation:
+        // The animation owns the artboard — ensure no SM so rebuildAnimation's
+        // !m_stateMachine guard holds (artboard was just rebuilt SM-less, so
+        // this is a no-op, but it documents the invariant).
+        teardownStateMachine();
+        rebuildAnimation();     // refreshes timeline meta
+        break;
+    case PlaybackMode::StateMachine:
+        // SM only — no animation fallback even if the SM is absent.
+        rebuildStateMachine();
+        m_animation.reset();
+        refreshTimelineMeta();  // SM or static artboard — no scrubbable timeline
+        break;
+    case PlaybackMode::Auto:
+        rebuildStateMachine();
+        // Animation fallback only kicks in when there's no SM — the most
+        // common case in older / simpler rivs (e.g. a marketing animation
+        // with a single timeline). With an SM, the SM owns playback.
+        if (!m_stateMachine)
+            rebuildAnimation();     // refreshes timeline meta
+        else
+            refreshTimelineMeta();  // SM owns playback — no scrubbable timeline
+        break;
+    }
     rebuildViewModel();
 }
 
@@ -624,9 +669,81 @@ void RiveView::rebuildStateMachine()
 void RiveView::rebuildAnimation()
 {
     m_animation.reset();
-    if (!m_artboard || m_stateMachine)
+    if (m_artboard && !m_stateMachine)
+        m_animation = m_artboard->createAnimation(m_animationName);
+    refreshTimelineMeta();
+}
+
+void RiveView::refreshTimelineMeta()
+{
+    int fps = 0;
+    int frameCount = 0;
+    if (m_animation)
+    {
+        fps = static_cast<int>(m_animation->fps());
+        if (fps > 0)
+            frameCount = static_cast<int>(
+                std::lround(m_animation->durationSeconds() * static_cast<float>(fps)));
+    }
+    if (fps != m_fps)
+    {
+        m_fps = fps;
+        emit fpsChanged();
+    }
+    if (frameCount != m_frameCount)
+    {
+        m_frameCount = frameCount;
+        emit frameCountChanged();
+    }
+    // Any seek queued against a previous animation is moot now.
+    m_pendingSeekFrame = -1;
+    if (m_animation)
+    {
+        publishCurrentFrame();
+    }
+    else if (m_currentFrame != 0)
+    {
+        m_currentFrame = 0;
+        emit currentFrameChanged();
+    }
+}
+
+void RiveView::publishCurrentFrame()
+{
+    if (!m_animation || m_fps <= 0)
         return;
-    m_animation = m_artboard->createAnimation(m_animationName);
+    // m_time runs over [startTime, startTime + durationSeconds]; speed is
+    // clamped >= 0 so startTime() == the work-area start. Frame is the
+    // offset from there scaled by fps.
+    const int frame = std::clamp(
+        static_cast<int>(std::lround((m_animation->time() - m_animation->startTime()) *
+                                     static_cast<float>(m_fps))),
+        0, m_frameCount);
+    if (frame != m_currentFrame)
+    {
+        m_currentFrame = frame;
+        emit currentFrameChanged();
+    }
+}
+
+void RiveView::setCurrentFrame(int frame)
+{
+    // No scrubbable timeline active (no animation, or an SM owns playback).
+    if (m_fps <= 0 || m_frameCount <= 0)
+        return;
+    frame = std::clamp(frame, 0, m_frameCount);
+    // The actual seek (m_animation->time()/apply()) must run on the render
+    // thread — stash it and force a repaint. Optimistically publish the
+    // value so a bound Slider tracks immediately; the render path will
+    // re-publish the applied frame (a no-op when equal).
+    m_pendingSeekFrame = frame;
+    if (m_currentFrame != frame)
+    {
+        m_currentFrame = frame;
+        emit currentFrameChanged();
+    }
+    m_settled = false; // force a repaint so the seek lands even when paused
+    update();
 }
 
 void RiveView::tryLoad()
@@ -694,40 +811,95 @@ void RiveView::tryLoad()
     {
         m_loadedArtboardName = m_artboardName;
         rebuildArtboard();
-        // rebuildArtboard recreates the SM with the current
-        // m_stateMachineName, so mark it as already-applied.
+        // rebuildArtboard recreates the SM/animation per m_playbackMode with
+        // the current names, so mark them all as already-applied.
         m_loadedStateMachineName = m_stateMachineName;
         m_loadedAnimationName = m_animationName;
+        m_loadedPlaybackMode = m_playbackMode;
         m_frameTimer.restart();
         m_lastAdvanceNs = 0;
         m_settled = false;
         return;
     }
 
-    // SM-only change: keep the artboard, swap the SM.
+    // Playback-mode change (no artboard rebuild): switch which layer drives
+    // the artboard. Tears down the inactive layer, builds the active one, and
+    // commits both name shadow vars so a later name edit or switch-back works.
+    if (m_loadedPlaybackMode != m_playbackMode)
+    {
+        m_loadedPlaybackMode = m_playbackMode;
+        switch (m_playbackMode)
+        {
+        case PlaybackMode::Animation:
+            teardownStateMachine();
+            rebuildAnimation();
+            break;
+        case PlaybackMode::StateMachine:
+            m_animation.reset();
+            rebuildStateMachine();
+            if (m_viewModel && m_stateMachine)
+                m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+            refreshTimelineMeta();
+            break;
+        case PlaybackMode::Auto:
+            rebuildStateMachine();
+            if (m_viewModel && m_stateMachine)
+                m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+            if (!m_stateMachine)
+                rebuildAnimation();
+            else
+            {
+                m_animation.reset();
+                refreshTimelineMeta();
+            }
+            break;
+        }
+        m_loadedStateMachineName = m_stateMachineName;
+        m_loadedAnimationName = m_animationName;
+        m_settled = false;
+        // No early return: the name shadow vars are committed, so the SM /
+        // animation blocks below are guarded no-ops, and falling through lets
+        // a simultaneous VM-name change still apply via the VM block.
+    }
+
+    // SM-only change: keep the artboard, swap the SM. Inert in Animation mode
+    // (no SM is built there); the shadow var still advances so a later switch
+    // to Auto/StateMachine rebuilds against the latest name.
     if (m_loadedStateMachineName != m_stateMachineName)
     {
         m_loadedStateMachineName = m_stateMachineName;
-        rebuildStateMachine();
-        // SM swap re-binds the VM instance through the new SM so its
-        // transition guards see the same data.
-        if (m_viewModel && m_stateMachine)
-            m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
-        // Re-evaluate animation fallback in case the new SM name was
-        // empty/unmatched (drop back to animation playback).
-        if (!m_stateMachine)
-            rebuildAnimation();
-        else
-            m_animation.reset();
-        m_settled = false;
+        if (m_playbackMode != PlaybackMode::Animation)
+        {
+            rebuildStateMachine();
+            // SM swap re-binds the VM instance through the new SM so its
+            // transition guards see the same data.
+            if (m_viewModel && m_stateMachine)
+                m_stateMachine->bindViewModelInstance(m_viewModel->sharedRaw());
+            // Re-evaluate animation fallback in case the new SM name was
+            // empty/unmatched — but only in Auto. In StateMachine mode an
+            // unmatched name leaves a static artboard (no fallback).
+            if (!m_stateMachine && m_playbackMode == PlaybackMode::Auto)
+                rebuildAnimation();
+            else
+            {
+                m_animation.reset();
+                refreshTimelineMeta();
+            }
+            m_settled = false;
+        }
     }
 
-    // Animation-only change (no SM, user picked a different timeline).
-    if (!m_stateMachine && m_loadedAnimationName != m_animationName)
+    // Animation-only change (user picked a different timeline). Active when the
+    // animation is the playback layer: Animation mode always, or Auto mode with
+    // no SM. Under a live SM (Auto/StateMachine) it's inert.
+    if (m_loadedAnimationName != m_animationName)
     {
         m_loadedAnimationName = m_animationName;
-        rebuildAnimation();
-        m_settled = false;
+        if (m_playbackMode == PlaybackMode::Animation || !m_stateMachine)
+        {
+            rebuildAnimation();
+            m_settled = false;
+        }
     }
 
     // View-model name / preset change: rebind the VM and rebuild the SM
@@ -1062,8 +1234,31 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         return nullptr;
     }
 
-    // Advance the SM (if any) or the raw artboard.
-    if (m_playing && !m_settled)
+    // Apply a QML-requested timeline seek. The render thread is the only
+    // place we may touch m_animation, so setCurrentFrame() just queues the
+    // frame and we land it here — before the advance, so a paused scrub
+    // still takes effect this frame.
+    bool didSeek = false;
+    if (m_animation && m_pendingSeekFrame >= 0 && m_fps > 0)
+    {
+        const float t = m_animation->startTime() +
+                        static_cast<float>(m_pendingSeekFrame) / static_cast<float>(m_fps);
+        m_animation->time(t);
+        m_animation->advanceAndApply(0.0f); // push onto the artboard + run layout/databind
+        if (m_viewModel)
+            m_viewModel->advance();
+        m_pendingSeekFrame = -1;
+        m_settled = false;
+        // Keep the frame clock anchored to now so resuming playback doesn't
+        // jump by the time spent scrubbing.
+        m_lastAdvanceNs = m_frameTimer.nsecsElapsed();
+        publishCurrentFrame();
+        didSeek = true;
+    }
+
+    // Advance the SM (if any) or the raw artboard. Skipped on a frame where
+    // we just seeked, so the scrubbed position isn't immediately stepped past.
+    if (!didSeek && m_playing && !m_settled)
     {
         const qint64 nowNs = m_frameTimer.nsecsElapsed();
         const qint64 deltaNs = nowNs - m_lastAdvanceNs;
@@ -1087,6 +1282,8 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         // property wrappers can poll for changes.
         if (m_viewModel)
             m_viewModel->advance();
+        // Track the playhead so a bound scrubber follows along during playback.
+        publishCurrentFrame();
         if (!needsMore)
             m_settled = true;
     }

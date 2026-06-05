@@ -92,10 +92,14 @@ ApplicationWindow {
     function resetRiveSelectors() {
         artboardSelector.currentIndex = 0
         stateMachineSelector.currentIndex = 0
+        animationSelector.currentIndex = 0
+        playbackModeSelector.currentIndex = 0
         viewModelSelector.currentIndex = 0
         viewModelInstanceSelector.currentIndex = 0
         rive.artboard = ""
         rive.stateMachineName = ""
+        rive.animationName = ""
+        rive.playbackMode = RiveView.PlaybackMode.Auto
         rive.viewModelName = ""
         rive.viewModelInstanceName = ""
     }
@@ -519,6 +523,99 @@ ApplicationWindow {
                         }
                     }
                 }
+            }
+        }
+
+        // ----- Transport bar: timeline scrubber --------------------------
+        //
+        // Exercises RiveView's frame-based scrubbing (currentFrame /
+        // frameCount / fps). These describe the active *linear animation*;
+        // a state machine has no single scrubbable timeline, so the slider
+        // disables and the readout says so when an SM is driving playback.
+        // To scrub a timeline on a file that HAS a state machine, set
+        // Mode → Animation and pick the timeline from the Animation dropdown.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Button {
+                text: rive.playing ? qsTr("❚❚") : qsTr("▶")
+                Layout.preferredWidth: 44
+                onClicked: rive.playing = !rive.playing
+                ToolTip.text: qsTr("Play / pause")
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+            }
+
+            Label { text: qsTr("Mode:"); color: "#ddd" }
+            ComboBox {
+                id: playbackModeSelector
+                Layout.preferredWidth: 130
+                // Model order matches RiveView.PlaybackMode (Auto=0,
+                // StateMachine=1, Animation=2), so the index round-trips.
+                model: ["Auto", "State machine", "Animation"]
+                currentIndex: rive.playbackMode
+                onActivated: rive.playbackMode = currentIndex
+                ToolTip.text: qsTr("Auto: state machine if present, else animation.  " +
+                                   "State machine: SM only (static if absent).  " +
+                                   "Animation: force the linear animation — scrubbable — " +
+                                   "even when the file has a state machine.")
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+            }
+
+            Label { text: qsTr("Animation:"); color: "#ddd" }
+            ComboBox {
+                id: animationSelector
+                Layout.preferredWidth: 180
+                model: [qsTr("(default)")].concat(rive.animationNames)
+                onActivated: rive.animationName =
+                    (currentIndex === 0 ? "" : currentText)
+                ToolTip.text: qsTr("The playback timeline. Drives the view in " +
+                                   "Animation mode (and in Auto mode when the " +
+                                   "artboard has no state machine); the scrubber " +
+                                   "works on it.")
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+            }
+
+            Slider {
+                id: scrubBar
+                Layout.fillWidth: true
+                enabled: rive.frameCount > 0
+                from: 0
+                to: Math.max(1, rive.frameCount)
+                stepSize: 1
+                // Tracks the playhead during playback; writing back on drag
+                // seeks. Pause while scrubbing so the frame clock doesn't
+                // fight the handle, then restore the prior play state.
+                value: rive.currentFrame
+                property bool wasPlaying: false
+                onPressedChanged: {
+                    if (pressed) {
+                        wasPlaying = rive.playing
+                        rive.playing = false
+                    } else {
+                        rive.playing = wasPlaying
+                    }
+                }
+                onMoved: rive.currentFrame = value
+            }
+
+            Label {
+                Layout.preferredWidth: 200
+                horizontalAlignment: Text.AlignRight
+                text: rive.frameCount > 0
+                          ? rive.currentFrame + " / " + rive.frameCount + " f   " +
+                            (rive.fps > 0
+                                 ? (rive.currentFrame / rive.fps).toFixed(2) + "s @ " +
+                                   rive.fps + "fps"
+                                 : "")
+                          : qsTr("no timeline (state machine active)")
+                color: rive.frameCount > 0 ? "#aaa" : "#666"
+                font.family: "Menlo"
+                font.pixelSize: 11
+                elide: Text.ElideRight
             }
         }
 

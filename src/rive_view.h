@@ -54,12 +54,30 @@ class RiveView : public QQuickItem
     Q_PROPERTY(QString artboard READ artboard WRITE setArtboard NOTIFY artboardChanged)
     Q_PROPERTY(QString stateMachineName READ stateMachineName WRITE setStateMachineName
                    NOTIFY stateMachineNameChanged)
-    // Linear animation playback. Used as a fallback when the artboard
-    // has no state machine (matches rive's web player). Empty name picks
-    // the first animation. Ignored if a state machine is active.
+    // Forces how playback is driven, overriding the automatic SM-vs-animation
+    // choice. Default Auto reproduces the historic behavior exactly.
+    Q_PROPERTY(PlaybackMode playbackMode READ playbackMode WRITE setPlaybackMode
+                   NOTIFY playbackModeChanged)
+    // Linear animation playback. In Auto mode, used as a fallback when the
+    // artboard has no state machine (matches rive's web player); empty name
+    // picks the first animation. In Animation mode this is the authoritative
+    // playback timeline regardless of any state machine in the file. Ignored
+    // only while a state machine is actually driving (Auto/StateMachine mode
+    // with a live SM).
     Q_PROPERTY(QString animationName READ animationName WRITE setAnimationName
                    NOTIFY animationNameChanged)
     Q_PROPERTY(QStringList animationNames READ animationNames NOTIFY animationNamesChanged)
+    // Frame-based timeline scrubbing for the linear-animation playback
+    // path. `frameCount` / `fps` describe the active animation; reading
+    // `currentFrame` reports the playhead, writing it seeks. All three are
+    // 0 while a state machine is active — a state machine is a graph, not a
+    // single scrubbable timeline (drive it through its data-bound inputs
+    // instead). Set `playing: false` to scrub without the frame clock
+    // advancing the playhead underneath you.
+    Q_PROPERTY(int currentFrame READ currentFrame WRITE setCurrentFrame
+                   NOTIFY currentFrameChanged)
+    Q_PROPERTY(int frameCount READ frameCount NOTIFY frameCountChanged)
+    Q_PROPERTY(int fps READ fps NOTIFY fpsChanged)
     Q_PROPERTY(Fit fit READ fit WRITE setFit NOTIFY fitChanged)
     Q_PROPERTY(bool playing READ isPlaying WRITE setPlaying NOTIFY playingChanged)
     // Multiplier on the per-frame deltaSeconds passed to advance().
@@ -134,6 +152,22 @@ public:
     };
     Q_ENUM(Alignment)
 
+    // Explicit playback-mode override. Controls whether RiveView drives the
+    // artboard via a state machine, a linear animation, or auto-picks.
+    //   Auto         — build the SM from stateMachineName; if none results,
+    //                  fall back to the linear animation (historic default).
+    //   StateMachine — build the SM only; never fall back to an animation
+    //                  (artboard stays static if the SM is absent).
+    //   Animation    — never build the SM; play the linear animation named by
+    //                  animationName ("" = first). The scrubbable path.
+    enum class PlaybackMode
+    {
+        Auto,
+        StateMachine,
+        Animation
+    };
+    Q_ENUM(PlaybackMode)
+
     explicit RiveView(QQuickItem* parent = nullptr);
     ~RiveView() override;
 
@@ -146,9 +180,17 @@ public:
     QString stateMachineName() const { return m_stateMachineName; }
     void setStateMachineName(const QString& name);
 
+    PlaybackMode playbackMode() const { return m_playbackMode; }
+    void setPlaybackMode(PlaybackMode mode);
+
     QString animationName() const { return m_animationName; }
     void setAnimationName(const QString& name);
     QStringList animationNames() const;
+
+    int currentFrame() const { return m_currentFrame; }
+    void setCurrentFrame(int frame);
+    int frameCount() const { return m_frameCount; }
+    int fps() const { return m_fps; }
 
     Fit fit() const { return m_fit; }
     void setFit(Fit f);
@@ -215,8 +257,12 @@ signals:
     void sourceChanged();
     void artboardChanged();
     void stateMachineNameChanged();
+    void playbackModeChanged();
     void animationNameChanged();
     void animationNamesChanged();
+    void currentFrameChanged();
+    void frameCountChanged();
+    void fpsChanged();
     void fitChanged();
     void playingChanged();
     void speedChanged();
@@ -263,10 +309,21 @@ private:
     void tryLoad();           // on render thread; creates artboard + SM
     void rebuildArtboard();   // called when `artboard` prop changes
     void rebuildStateMachine(); // called when `stateMachineName` prop changes
+    // Tear down the active SM (disconnect, reset, emit stateMachineChanged on
+    // actual change). Shared by rebuildArtboard and the Animation-mode paths
+    // so rebuildAnimation()'s `!m_stateMachine` guard holds.
+    void teardownStateMachine();
     // Build a LinearAnimationInstance for the current animationName.
     // Only invoked when there's no SM — playback fallback path. Resets
     // any existing animation. Idempotent.
     void rebuildAnimation();
+    // Recompute fps/frameCount from the active animation (0 when none, e.g.
+    // an SM is active) and refresh currentFrame from its playhead. Emits
+    // the relevant change signals. Render-thread only — touches m_animation.
+    void refreshTimelineMeta();
+    // Recompute currentFrame from m_animation's playhead; emit on change.
+    // Render-thread only.
+    void publishCurrentFrame();
     void rebuildViewModel();    // called after artboard/SM rebuild or VM-name prop change
     QPointF mapToArtboard(const QPointF& localPos) const;
     void dispatchPointer(QEvent::Type type, const QPointF& localPos, int pointerId = 0);
@@ -280,7 +337,17 @@ private:
     QSizeF m_layoutSize;             // invalid = use design-time size
     Fit m_fit = Fit::Contain;
     Alignment m_alignment = Alignment::Center;
+    PlaybackMode m_playbackMode = PlaybackMode::Auto;
     qreal m_speed = 1.0;
+    // Timeline scrubbing state. m_fps / m_frameCount describe the active
+    // linear animation (0 when none). m_currentFrame is the published
+    // playhead. m_pendingSeekFrame is >= 0 when QML requested a seek that
+    // the render thread hasn't applied yet — the apply has to touch
+    // m_animation, which is render-thread only.
+    int m_currentFrame = 0;
+    int m_frameCount = 0;
+    int m_fps = 0;
+    int m_pendingSeekFrame = -1;
     bool m_playing = true;
     bool m_inputForwarding = true;
     bool m_autoBindViewModel = true;
@@ -324,6 +391,9 @@ private:
     QString m_loadedArtboardName;
     QString m_loadedStateMachineName;
     QString m_loadedAnimationName;
+    // Defaults to Auto to match m_playbackMode, so no spurious mode-change
+    // rebuild fires on first load.
+    PlaybackMode m_loadedPlaybackMode = PlaybackMode::Auto;
 
     // Created on the render thread, so we can't use Qt parenting to
     // RiveView (GUI thread) — Qt refuses cross-thread setParent. Own
