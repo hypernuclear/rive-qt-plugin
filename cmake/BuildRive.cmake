@@ -538,6 +538,16 @@ else()
     if(RIVE_AUDIO_FLAG)
         set(_rive_extra_args "${_rive_extra_args} ${RIVE_AUDIO_FLAG}")
     endif()
+    # Match rive's target arch to what CMake is building. build_rive.sh defaults
+    # to the host arch, so an x86_64 cross-build on an Apple Silicon host (the
+    # CI x64 leg) would otherwise produce arm64 libs that fail to link against
+    # the x86_64 CMake objects. Single value only — a universal (multi-arch)
+    # request would need two builds + lipo, which this wrapper doesn't do.
+    if(CMAKE_OSX_ARCHITECTURES STREQUAL "x86_64")
+        set(_rive_extra_args "${_rive_extra_args} --arch=x64")
+    elseif(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+        set(_rive_extra_args "${_rive_extra_args} --arch=arm64")
+    endif()
 
     # When --with_vulkan is enabled on macOS, rive's shader Makefile
     # shells out to glslangValidator and spirv-opt for SPIR-V emission.
