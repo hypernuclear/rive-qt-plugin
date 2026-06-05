@@ -83,6 +83,84 @@ ApplicationWindow {
         return "file://" + path;
     }
 
+    // Set by refreshSamples() while FolderListModel rescans; cleared
+    // after selection is restored and the file is reloaded from disk.
+    property string pendingSampleRestore: ""
+    // True while a forced model rescan is in flight (blocks premature restore).
+    property bool samplesRescanPending: false
+
+    function resetRiveSelectors() {
+        artboardSelector.currentIndex = 0
+        stateMachineSelector.currentIndex = 0
+        viewModelSelector.currentIndex = 0
+        viewModelInstanceSelector.currentIndex = 0
+        rive.artboard = ""
+        rive.stateMachineName = ""
+        rive.viewModelName = ""
+        rive.viewModelInstanceName = ""
+    }
+
+    function rescanSamplesModel() {
+        // Toggle nameFilters so Qt re-reads the directory (assigning the
+        // same folder URL is a no-op in FolderListModel).
+        samplesRescanPending = true
+        const filters = samplesModel.nameFilters
+        samplesModel.nameFilters = []
+        Qt.callLater(function() {
+            samplesModel.nameFilters = filters.length ? filters : ["*.riv"]
+            // Count may be unchanged after an in-place edit; status/count
+            // signals are not guaranteed, so finish restore explicitly.
+            Qt.callLater(tryRestorePendingSample)
+        })
+    }
+
+    function reloadSampleFromPath(filePath) {
+        const url = localPathToFileUrl(filePath)
+        urlField.text = ""
+        resetRiveSelectors()
+        // Clear first, then set on the next event-loop turn. Assigning both
+        // in one handler leaves m_loadedUrl === m_source on the render
+        // thread, so tryLoad() never re-reads the file or drops the cache.
+        rive.source = ""
+        Qt.callLater(function() {
+            rive.source = url
+        })
+    }
+
+    function tryRestorePendingSample() {
+        if (samplesRescanPending) {
+            if (samplesModel.status !== FolderListModel.Ready)
+                return
+            samplesRescanPending = false
+        }
+        if (!pendingSampleRestore.length)
+            return
+        const name = pendingSampleRestore
+        pendingSampleRestore = ""
+        for (let i = 0; i < samplesModel.count; i++) {
+            if (samplesModel.get(i, "fileName") === name) {
+                sampleSelector.currentIndex = i
+                reloadSampleFromPath(samplesModel.get(i, "filePath"))
+                return
+            }
+        }
+        if (samplesModel.count > 0)
+            sampleSelector.currentIndex = 0
+    }
+
+    function refreshSamples() {
+        // URL loader owns the source — rescan the list only.
+        if (urlField.text.length === 0
+                && sampleSelector.currentIndex >= 0
+                && samplesModel.count > 0) {
+            pendingSampleRestore = samplesModel.get(
+                sampleSelector.currentIndex, "fileName")
+        } else {
+            pendingSampleRestore = ""
+        }
+        rescanSamplesModel()
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 16
@@ -100,22 +178,20 @@ ApplicationWindow {
             ComboBox {
                 id: sampleSelector
                 Layout.fillWidth: true
-                Layout.columnSpan: 7
+                Layout.columnSpan: 6
                 textRole: "fileName"
                 valueRole: "filePath"
                 model: samplesModel
-                onActivated: {
-                    rive.source = localPathToFileUrl(currentValue)
-                    urlField.text = ""
-                    artboardSelector.currentIndex = 0
-                    stateMachineSelector.currentIndex = 0
-                    viewModelSelector.currentIndex = 0
-                    viewModelInstanceSelector.currentIndex = 0
-                    rive.artboard = ""
-                    rive.stateMachineName = ""
-                    rive.viewModelName = ""
-                    rive.viewModelInstanceName = ""
-                }
+                onActivated: reloadSampleFromPath(currentValue)
+            }
+            Button {
+                id: refreshSamplesButton
+                text: qsTr("Refresh")
+                enabled: samplesModel.status !== FolderListModel.Loading
+                ToolTip.text: qsTr("Rescan samples folder and reload the current file")
+                ToolTip.visible: hovered
+                ToolTip.delay: 600
+                onClicked: refreshSamples()
             }
 
             // URL loader — exercises RiveFile's http(s) scheme support
@@ -877,6 +953,10 @@ ApplicationWindow {
     Connections {
         target: samplesModel
         function onCountChanged() {
+            if (pendingSampleRestore.length || samplesRescanPending) {
+                tryRestorePendingSample()
+                return
+            }
             if (samplesModel.count > 0 && !rive.source.toString().length) {
                 // Prefer a sample known to exercise view-model bindings
                 // so the demo lands on something testable. Falls
@@ -898,6 +978,10 @@ ApplicationWindow {
                 rive.source = localPathToFileUrl(
                     samplesModel.get(pickedIdx, "filePath"));
             }
+        }
+        function onStatusChanged() {
+            if (pendingSampleRestore.length || samplesRescanPending)
+                tryRestorePendingSample()
         }
     }
 }
