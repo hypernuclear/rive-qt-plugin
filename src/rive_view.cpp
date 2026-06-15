@@ -670,7 +670,13 @@ void RiveView::rebuildAnimation()
 {
     m_animation.reset();
     if (m_artboard && !m_stateMachine)
+    {
         m_animation = m_artboard->createAnimation(m_animationName);
+        // Pose the first frame so a view that loads while paused renders
+        // frame 0 instead of the artboard's (often blank) rest pose.
+        if (m_animation)
+            m_animation->advanceAndApply(0.0f);
+    }
     refreshTimelineMeta();
 }
 
