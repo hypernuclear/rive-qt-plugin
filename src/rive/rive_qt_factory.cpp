@@ -85,8 +85,19 @@ rive::rcp<rive::RenderImage> RiveQtFactory::decodeImage(rive::Span<const uint8_t
     if (packed.bytesPerLine() != static_cast<int>(w) * 4)
         packed = packed.copy(); // copy() returns a tightly-packed buffer
 
+    // v0.1.x added a GPUTextureFormat + compressed-block params to
+    // makeImageTexture (KTX2 / BC7 / ASTC support). We supply only the
+    // uncompressed RGBA8-premultiplied base level and let the backend
+    // generate the mip chain via GPU blits — mirrors the runtime's own
+    // bitmap path in render_context.cpp.
     rive::rcp<rive::gpu::Texture> texture = m_context->impl()->makeImageTexture(
-        w, h, mipLevelCount, packed.constBits());
+        w, h, mipLevelCount,
+        rive::GPUTextureFormat::rgba32,
+        packed.constBits(),
+        /*blockWidth=*/1,
+        /*blockHeight=*/1,
+        /*srgb=*/false,
+        /*generateRemainingMips=*/true);
     if (!texture)
         return nullptr;
     return rive::make_rcp<rive::RiveRenderImage>(std::move(texture));
