@@ -12,6 +12,10 @@ compile_commands.json
 .cmake/
 .cache/
 .claude/
+# Per-developer presets — machine-specific paths (Qt prefix, etc.). Each
+# dev creates their own; it inherits the committed presets in
+# CMakePresets.json. Never committed.
+CMakeUserPresets.json
 
 # IDEs — keep .vscode/ tracked so launch/tasks configs ship with the repo.
 .idea/

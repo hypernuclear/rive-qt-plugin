@@ -40,5 +40,19 @@
             "displayName": "Everything",
             "configurePreset": "default"
         }
+    ],
+    "testPresets": [
+        {
+            "name": "default",
+            "displayName": "All tests",
+            "configurePreset": "default",
+            "output": {
+                "outputOnFailure": true
+            },
+            "execution": {
+                "noTestsAction": "error",
+                "stopOnFailure": false
+            }
+        }
     ]
 }
