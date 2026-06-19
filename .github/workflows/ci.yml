@@ -58,6 +58,13 @@ jobs:
           arch: ${{ matrix.qt-arch }}
           modules: qtshadertools
           cache: true
+          # Qt 6.11+ Windows uses a flattened per-arch repo layout that
+          # aqtinstall v3.3.0 (the version bundled by the action) can't parse,
+          # so the Install Qt step fails on Windows with "Failed to locate XML
+          # data for Qt version 6.11.1" (macOS is unaffected). Pin aqt to the
+          # master SHA carrying the fix until aqt v3.4+ ships on PyPI — same
+          # workaround as hypershot's build.yml. Drop this once aqt releases.
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@75ea7944aeac985e226df0a882cd5b3470e51a97"
 
       - name: Install Rive macOS build prerequisites
         # rive-runtime compiles its Metal renderer shaders at build time.
