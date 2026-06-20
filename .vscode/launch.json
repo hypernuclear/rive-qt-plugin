@@ -1,20 +1,17 @@
 {
-  // Launch configs for the rive-qt-plugin viewer. Mirrors the hypershot
-  // pattern — Qt comes from the Qt kit you've selected in CMake Tools
-  // (the qt-cpp extension injects qt.toolchain.cmake), and the launch
-  // target comes from CMake Tools' `${command:cmake.launchTargetPath}`.
+  // Launch configs for the rive-qt-plugin viewer. The launch target comes
+  // from CMake Tools' `${command:cmake.launchTargetPath}`, which builds the
+  // target first (in the active configure preset's build dir) and returns
+  // its path — so F5 builds, then runs.
   //
-  // Select `rive_viewer` as the launch target (status bar at the bottom
-  // of VS Code) before pressing F5.
+  // Before pressing F5:
+  //   1. Pick a configure preset (Command Palette → "CMake: Select Configure
+  //      Preset") — e.g. "RelWithDebInfo + Qt" or "Default (Ninja) + Qt".
+  //   2. Pick `rive_viewer` as the launch target (status bar at the bottom).
+  // The cppdbg launch below is first, so a bare F5 runs the app (the QML
+  // attach config is a helper for the C++/QML compound, not a standalone F5).
   "version": "0.2.0",
   "configurations": [
-    {
-      "name": "Qt: QML: Attach by port",
-      "type": "qml",
-      "request": "attach",
-      "host": "127.0.0.1",
-      "port": "25684"
-    },
     {
       "name": "Qt: Debug with cppdbg and QML debugger",
       "type": "cppdbg",
@@ -72,6 +69,13 @@
         "MIMode": "gdb",
         "miDebuggerPath": "${command:qt-cpp.minGWgdb}"
       }
+    },
+    {
+      "name": "Qt: QML: Attach by port",
+      "type": "qml",
+      "request": "attach",
+      "host": "127.0.0.1",
+      "port": "25684"
     }
   ],
   "compounds": [

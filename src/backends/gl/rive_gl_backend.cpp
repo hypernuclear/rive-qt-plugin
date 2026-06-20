@@ -58,6 +58,10 @@
 #pragma warning(push)
 #pragma warning(disable : 4005)
 #endif
+// Complete rive::gpu::Texture before the impl header: MSVC instantiates
+// rcp<Texture>::~rcp at RenderContextImpl::platformDecodeImageTexture's
+// by-value return declaration and needs the full type (Clang doesn't).
+#include <rive/renderer/texture.hpp>
 #include <rive/renderer/gl/render_context_gl_impl.hpp>
 #include <rive/renderer/gl/render_target_gl.hpp>
 #include <rive/renderer/render_context.hpp>

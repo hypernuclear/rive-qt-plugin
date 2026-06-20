@@ -32,6 +32,10 @@
 #include <rive/artboard.hpp>
 #include <rive/layout.hpp>
 #include <rive/math/aabb.hpp>
+// Complete rive::gpu::Texture before the impl header: MSVC instantiates
+// rcp<Texture>::~rcp at RenderContextImpl::platformDecodeImageTexture's
+// by-value return declaration and needs the full type (Clang doesn't).
+#include <rive/renderer/texture.hpp>
 #include <rive/renderer/metal/render_context_metal_impl.h>
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>

@@ -101,6 +101,13 @@ endif()
 option(RIVE_QT_WITH_RIVE_TOOLS
     "Enable rive's tools mode (allows unsigned scripts, builds Luau compiler)" ON)
 
+# Test suite opt-in. Default ON only when this repo is the top-level
+# project — host projects consuming us via add_subdirectory don't build
+# our tests. The suite (tests/) drives the wrapper classes against the
+# vendored runtime and doubles as the regression gate for runtime bumps.
+option(RIVE_QT_BUILD_TESTS
+    "Build the wrapper test suite" ${_rive_qt_is_top_level})
+
 # ----------------------------------------------------------------------------
 # Qt
 # ----------------------------------------------------------------------------
@@ -109,6 +116,12 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Quick Qml QuickControls2 Network)
+
+# Qt Test — only needed for the test suite. Pulled here (not in tests/)
+# so the find is visible regardless of where the option is read.
+if(RIVE_QT_BUILD_TESTS)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
+endif()
 
 qt_standard_project_setup(REQUIRES 6.5)
 
@@ -340,4 +353,12 @@ add_library(rive_qt::rive_qt ALIAS rive_qt)
 # ----------------------------------------------------------------------------
 if(RIVE_QT_BUILD_EXAMPLES)
     add_subdirectory(examples/viewer)
+endif()
+
+# ----------------------------------------------------------------------------
+# Tests
+# ----------------------------------------------------------------------------
+if(RIVE_QT_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
 endif()

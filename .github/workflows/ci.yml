@@ -1,0 +1,126 @@
+name: CI
+
+# Build the plugin + run the wrapper test suite. Doubles as the regression
+# gate for runtime bumps: the headless contract tests fail loudly at a named
+# wrapper↔runtime contract point if upstream drifts, and the macOS leg's
+# render smoke exercises the GPU image path that a compile alone won't catch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+env:
+  QT_VERSION: "6.11.1"
+
+jobs:
+  build-test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # macOS arm64 is the primary leg: Metal backend + full suite
+          # including the offscreen render smoke.
+          - os: macos-latest
+            qt-arch: clang_64
+            qt-host: mac
+            cmake-args: "-G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64"
+          - os: macos-latest
+            qt-arch: clang_64
+            qt-host: mac
+            cmake-args: "-G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64"
+          # Windows proves the D3D11/D3D12 backends compile and the headless
+          # contract tests pass there (render smoke is APPLE-only and is
+          # simply not built off macOS).
+          - os: windows-2022
+            qt-arch: win64_msvc2022_64
+            qt-host: windows
+            cmake-args: '-G "Visual Studio 17 2022" -A x64'
+
+    steps:
+      - name: Checkout (with rive-runtime submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: ${{ env.QT_VERSION }}
+          host: ${{ matrix.qt-host }}
+          target: desktop
+          arch: ${{ matrix.qt-arch }}
+          modules: qtshadertools
+          cache: true
+          # Qt 6.11+ Windows uses a flattened per-arch repo layout that
+          # aqtinstall v3.3.0 (the version bundled by the action) can't parse,
+          # so the Install Qt step fails on Windows with "Failed to locate XML
+          # data for Qt version 6.11.1" (macOS is unaffected). Pin aqt to the
+          # master SHA carrying the fix until aqt v3.4+ ships on PyPI — same
+          # workaround as hypershot's build.yml. Drop this once aqt releases.
+          aqtsource: "git+https://github.com/miurahr/aqtinstall.git@75ea7944aeac985e226df0a882cd5b3470e51a97"
+
+      - name: Install Rive macOS build prerequisites
+        # rive-runtime compiles its Metal renderer shaders at build time.
+        # Newer Xcode ships the Metal compiler as a separately-downloaded
+        # component; attempt the download only when the option exists, and
+        # never fail the build over it. glslang/spirv-tools are insurance for
+        # a future Vulkan-enabled Qt (the backend self-disables on stock aqt
+        # Qt where QT_FEATURE_vulkan=OFF).
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          if xcodebuild -downloadComponent MetalToolchain 2>/dev/null; then
+            echo "Metal toolchain component downloaded."
+          else
+            echo "Metal toolchain bundled with this Xcode; continuing."
+          fi
+          brew install glslang spirv-tools
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -S . \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRIVE_QT_BUILD_TESTS=ON \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR" \
+            ${{ matrix.cmake-args }}
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release
+
+      - name: Test
+        shell: bash
+        run: ctest --test-dir build --build-config Release --output-on-failure
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.os }}-${{ strategy.job-index }}
+          path: build/Testing/
+          retention-days: 7
+
+  # Single aggregated status for branch protection: the matrix legs are
+  # individual contexts, so require this one job instead.
+  ci-gate:
+    name: ci-gate
+    needs: [build-test]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check result
+        run: |
+          result="${{ needs.build-test.result }}"
+          echo "build-test result: $result"
+          if [ "$result" = "success" ]; then
+            echo "ci-gate: pass"; exit 0
+          fi
+          echo "ci-gate: fail"; exit 1

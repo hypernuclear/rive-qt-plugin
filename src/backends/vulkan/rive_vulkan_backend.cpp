@@ -59,6 +59,10 @@
 #include <rive/math/aabb.hpp>
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>
+// Complete rive::gpu::Texture before the impl header: MSVC instantiates
+// rcp<Texture>::~rcp at RenderContextImpl::platformDecodeImageTexture's
+// by-value return declaration and needs the full type (Clang doesn't).
+#include <rive/renderer/texture.hpp>
 #include <rive/renderer/vulkan/render_context_vulkan_impl.hpp>
 #include <rive/renderer/vulkan/render_target_vulkan.hpp>
 #include <rive/renderer/vulkan/vulkan_context.hpp>
