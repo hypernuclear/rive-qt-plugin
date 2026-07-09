@@ -143,9 +143,17 @@ QString RiveQtAssetLoader::fallbackFontPath()
 RiveQtAssetLoader::RiveQtAssetLoader(QUrl baseUrl) : m_baseUrl(std::move(baseUrl)) {}
 
 bool RiveQtAssetLoader::loadContents(rive::FileAsset& asset,
-                                     rive::Span<const uint8_t> /*inBandBytes*/,
+                                     rive::Span<const uint8_t> inBandBytes,
                                      rive::Factory* factory)
 {
+    // In-band: the asset's bytes are embedded in the .riv itself. Decline so
+    // the runtime decodes the embedded copy (FileAssetImporter::resolve does
+    // exactly that when the loader returns false) — the embedded bytes must
+    // always beat a referenced fetch or the font fallback below, otherwise an
+    // embedded font renders in the fallback face.
+    if (inBandBytes.size() > 0)
+        return false;
+
     // Hosted: asset has a cdn uuid — fetch from <cdnBaseUrl>/<uuid>.
     const std::string uuid = asset.cdnUuidStr();
     if (!uuid.empty())
