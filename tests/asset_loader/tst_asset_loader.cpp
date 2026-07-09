@@ -8,6 +8,9 @@
 
 #include <QTest>
 
+#include <rive/assets/font_asset.hpp>
+#include <rive/span.hpp>
+
 #include "rive_qt_asset_loader.h"
 
 #include "test_helpers.h"
@@ -47,6 +50,21 @@ private slots:
         // URL must not throw or crash (it's handed to File::import).
         RiveQtAssetLoader loader(riveqt_test::fixtureUrl(QStringLiteral("data_binding_test.riv")));
         Q_UNUSED(loader);
+    }
+
+    void inBandBytesAreDeclined()
+    {
+        // Regression: an asset whose bytes are embedded in the .riv must be
+        // DECLINED (return false) so FileAssetImporter::resolve() decodes the
+        // embedded copy. The loader used to ignore in-band bytes entirely and
+        // claim font assets with the fallback font, so a .riv with an
+        // embedded font rendered its text in the wrong face. The early
+        // decline happens before any factory use, so nullptr is safe here.
+        rive::FontAsset asset;
+        const uint8_t bytes[] = {0x00, 0x01, 0x02, 0x03};
+        RiveQtAssetLoader loader(riveqt_test::fixtureUrl(QStringLiteral("data_binding_test.riv")));
+        QVERIFY(!loader.loadContents(
+            asset, rive::Span<const uint8_t>(bytes, sizeof(bytes)), nullptr));
     }
 };
 
