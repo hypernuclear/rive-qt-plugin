@@ -16,6 +16,7 @@
 #include <QNetworkRequest>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
+#include <QScreen>
 #include <QStyleHints>
 #include <QTouchEvent>
 
@@ -1269,6 +1270,31 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         const qint64 nowNs = m_frameTimer.nsecsElapsed();
         const qint64 deltaNs = nowNs - m_lastAdvanceNs;
         m_lastAdvanceNs = nowNs;
+
+        // Frame-pacing spike detector: while continuously playing, the
+        // interval between frames should sit at the display period. Log
+        // intervals 1.6x-5x the running average (above 5x is a hide/show or
+        // pause gap, not jank) with timestamps so hitches can be correlated
+        // against host-app log activity. Debug level — can fire 1-2x/sec on
+        // displays whose pacing occasionally slips a vsync; enable with
+        // QT_LOGGING_RULES="rive.view.debug=true" when investigating jank.
+        if (m_paceLastNs > 0)
+        {
+            const qreal paceDelta = static_cast<qreal>(nowNs - m_paceLastNs);
+            if (m_paceEmaNs > 0)
+            {
+                if (paceDelta > m_paceEmaNs * 1.6 && paceDelta < m_paceEmaNs * 5)
+                    qCDebug(lcRiveView).nospace()
+                        << "frame pacing spike: " << paceDelta / 1e6
+                        << " ms (typical " << m_paceEmaNs / 1e6 << " ms)";
+                m_paceEmaNs = m_paceEmaNs * 0.9 + paceDelta * 0.1;
+            }
+            else
+            {
+                m_paceEmaNs = paceDelta;
+            }
+        }
+        m_paceLastNs = nowNs;
         const float delta = std::min(static_cast<float>(deltaNs) * 1e-9f, 0.25f) *
                             static_cast<float>(m_speed);
         bool needsMore = true;
@@ -1297,6 +1323,19 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
     const qreal dpr = win->effectiveDevicePixelRatio();
     const QSize pixelSize(static_cast<int>(std::ceil(itemSize.width() * dpr)),
                           static_cast<int>(std::ceil(itemSize.height() * dpr)));
+
+    // Perf diagnostics, logged once per target size: the render-target pixel
+    // count and refresh rate are the environment multipliers behind
+    // platform CPU differences (Retina 2x dpr = 4x pixels; ProMotion 120Hz =
+    // 2x frames), so surface them where a report can quote them.
+    static QSize lastLoggedPixelSize;
+    if (pixelSize != lastLoggedPixelSize)
+    {
+        lastLoggedPixelSize = pixelSize;
+        const QScreen* screen = win->screen();
+        qCInfo(lcRiveView) << "render target" << pixelSize << "dpr" << dpr
+                           << "refresh" << (screen ? screen->refreshRate() : 0.0) << "Hz";
+    }
 
     QSGTexture* tex = m_backend->ensureTexture(pixelSize);
     if (!tex)
