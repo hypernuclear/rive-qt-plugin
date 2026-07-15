@@ -16,6 +16,7 @@
 #include <QNetworkRequest>
 #include <QQuickWindow>
 #include <QSGSimpleTextureNode>
+#include <QScreen>
 #include <QStyleHints>
 #include <QTouchEvent>
 
@@ -451,8 +452,16 @@ void RiveView::itemChange(ItemChange change, const ItemChangeData& data)
 void RiveView::onBeforeSynchronizing()
 {
     // Keep requesting updates as long as the animation is live.
+    //
+    // The update() must run on the GUI thread: beforeSynchronizing fires on
+    // the render thread, and a render-thread update() only works for items
+    // rendered directly by the window pass. An item grabbed by a layer
+    // (Texture.sourceItem / ShaderEffectSource) — possibly culled from the
+    // window pass entirely — relies on the layer's live-update tracking,
+    // which only observes GUI-thread dirtying. Queued invoke costs one frame
+    // of latency and makes both paths correct.
     if (m_playing && !m_settled)
-        update();
+        QMetaObject::invokeMethod(this, &QQuickItem::update, Qt::QueuedConnection);
 }
 
 void RiveView::onSceneGraphInvalidated()
@@ -1203,6 +1212,22 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         return nullptr;
     }
 
+    // Frame driving normally hooks up in itemChange(ItemSceneChange), but an
+    // item used as a Texture.sourceItem / ShaderEffectSource has no visual
+    // parent, so that change never fires — the animation froze on its first
+    // frame when rendered into a Quick3D material. By the time we're painting
+    // a layer, window() is valid: connect lazily here (UniqueConnection makes
+    // the tree-parented path a no-op).
+    if (connect(win, &QQuickWindow::beforeSynchronizing, this,
+                &RiveView::onBeforeSynchronizing,
+                static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::UniqueConnection)))
+    {
+        qCDebug(lcRiveView) << "frame driver connected at paint time (layer/sourceItem path)";
+    }
+    connect(win, &QQuickWindow::sceneGraphInvalidated, this,
+            &RiveView::onSceneGraphInvalidated,
+            static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::UniqueConnection));
+
     if (!m_backend)
     {
         QString err;
@@ -1262,6 +1287,17 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         didSeek = true;
     }
 
+    // One-shot per instance: what drives this view's animation. Names the
+    // failure mode when a layered instance paints but never moves.
+    if (!m_advanceStateLogged)
+    {
+        m_advanceStateLogged = true;
+        qCDebug(lcRiveView) << "advance state:" << m_source.toString()
+                            << "sm=" << (m_stateMachine != nullptr)
+                            << "anim=" << (m_animation != nullptr)
+                            << "playing=" << m_playing << "settled=" << m_settled;
+    }
+
     // Advance the SM (if any) or the raw artboard. Skipped on a frame where
     // we just seeked, so the scrubbed position isn't immediately stepped past.
     if (!didSeek && m_playing && !m_settled)
@@ -1269,6 +1305,31 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         const qint64 nowNs = m_frameTimer.nsecsElapsed();
         const qint64 deltaNs = nowNs - m_lastAdvanceNs;
         m_lastAdvanceNs = nowNs;
+
+        // Frame-pacing spike detector: while continuously playing, the
+        // interval between frames should sit at the display period. Log
+        // intervals 1.6x-5x the running average (above 5x is a hide/show or
+        // pause gap, not jank) with timestamps so hitches can be correlated
+        // against host-app log activity. Debug level — can fire 1-2x/sec on
+        // displays whose pacing occasionally slips a vsync; enable with
+        // QT_LOGGING_RULES="rive.view.debug=true" when investigating jank.
+        if (m_paceLastNs > 0)
+        {
+            const qreal paceDelta = static_cast<qreal>(nowNs - m_paceLastNs);
+            if (m_paceEmaNs > 0)
+            {
+                if (paceDelta > m_paceEmaNs * 1.6 && paceDelta < m_paceEmaNs * 5)
+                    qCDebug(lcRiveView).nospace()
+                        << "frame pacing spike: " << paceDelta / 1e6
+                        << " ms (typical " << m_paceEmaNs / 1e6 << " ms)";
+                m_paceEmaNs = m_paceEmaNs * 0.9 + paceDelta * 0.1;
+            }
+            else
+            {
+                m_paceEmaNs = paceDelta;
+            }
+        }
+        m_paceLastNs = nowNs;
         const float delta = std::min(static_cast<float>(deltaNs) * 1e-9f, 0.25f) *
                             static_cast<float>(m_speed);
         bool needsMore = true;
@@ -1291,12 +1352,32 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         // Track the playhead so a bound scrubber follows along during playback.
         publishCurrentFrame();
         if (!needsMore)
+        {
             m_settled = true;
+            if (!m_settleLogged)
+            {
+                m_settleLogged = true;
+                qCDebug(lcRiveView) << "settled:" << m_source.toString()
+                                    << "(advance reported no more work)";
+            }
+        }
     }
 
     const qreal dpr = win->effectiveDevicePixelRatio();
     const QSize pixelSize(static_cast<int>(std::ceil(itemSize.width() * dpr)),
                           static_cast<int>(std::ceil(itemSize.height() * dpr)));
+
+    // Perf diagnostics, logged once per target size: the render-target pixel
+    // count and refresh rate are the environment multipliers behind
+    // platform CPU differences (Retina 2x dpr = 4x pixels; ProMotion 120Hz =
+    // 2x frames), so surface them where a report can quote them.
+    if (pixelSize != m_lastLoggedPixelSize)
+    {
+        m_lastLoggedPixelSize = pixelSize;
+        const QScreen* screen = win->screen();
+        qCInfo(lcRiveView) << "render target" << pixelSize << "dpr" << dpr
+                           << "refresh" << (screen ? screen->refreshRate() : 0.0) << "Hz";
+    }
 
     QSGTexture* tex = m_backend->ensureTexture(pixelSize);
     if (!tex)

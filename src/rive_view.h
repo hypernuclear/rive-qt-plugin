@@ -368,6 +368,18 @@ private:
     QElapsedTimer m_frameTimer;
     qint64 m_lastAdvanceNs = 0;
 
+    // Frame-pacing diagnostics (render thread only). EMA of the interval
+    // between updatePaintNode calls while playing; spikes are logged so rare
+    // jank can be caught in the act and correlated with host-app activity.
+    qint64 m_paceLastNs = 0;
+    qreal m_paceEmaNs = 0;
+    // Per-instance dedup for the render-target log (a static shared across
+    // instances re-triggers every frame when two views have different sizes).
+    QSize m_lastLoggedPixelSize;
+    // One-shot diagnostics for layered/sourceItem debugging.
+    bool m_advanceStateLogged = false;
+    bool m_settleLogged = false;
+
     // Drag detection (mouse only). When a mouse button is pressed we
     // capture the position and mark `pending`. Once the cursor moves
     // beyond Qt's startDragDistance threshold we fire dragStart on the
