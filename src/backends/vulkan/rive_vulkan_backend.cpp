@@ -467,7 +467,12 @@ QSGTexture* RiveVulkanBackend::ensureTexture(const QSize& pixelSize)
     }
     m_impl->qrhiTexture = qrhiTex;
 
-    m_impl->qsgTexture = m_impl->window->createTextureFromRhiTexture(qrhiTex);
+    m_impl->qsgTexture = m_impl->window->createTextureFromRhiTexture(
+        qrhiTex,
+        // Rive clears to transparent and artboards may not cover the
+        // item; without the alpha flag the scene graph composites the
+        // texture as opaque and transparent pixels render black.
+        QQuickWindow::TextureHasAlphaChannel);
     if (!m_impl->qsgTexture)
     {
         qCWarning(lcRiveVulkanBackend) << "createTextureFromRhiTexture failed";
