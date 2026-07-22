@@ -33,7 +33,11 @@
 #include <rive/renderer.hpp>
 #include <rive/viewmodel/runtime/viewmodel_runtime.hpp>
 
-Q_LOGGING_CATEGORY(lcRiveView, "rive.view")
+// Default the category floor to QtInfoMsg so qCDebug() diagnostics (e.g. the
+// frame-pacing spike detector) are OFF by default — opt in per the call sites'
+// comments with QT_LOGGING_RULES="rive.view.debug=true". The 2-arg macro
+// defaults to QtDebugMsg, which leaked those debug lines into release consoles.
+Q_LOGGING_CATEGORY(lcRiveView, "rive.view", QtInfoMsg)
 
 namespace {
 
