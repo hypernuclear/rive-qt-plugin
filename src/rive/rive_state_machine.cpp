@@ -84,6 +84,7 @@ bool RiveStateMachine::advance(float deltaSeconds)
         return false;
     const bool needsMore = m_sm->advanceAndApply(deltaSeconds);
     drainStateChanges();
+    publishCurrentState();
     return needsMore;
 }
 
@@ -120,5 +121,36 @@ void RiveStateMachine::drainStateChanges()
         // state changes as a flat list across all layers, with no way to ask
         // which layer each came from.
         emit stateChanged(QString::number(i), stateName);
+    }
+}
+
+void RiveStateMachine::publishCurrentState()
+{
+    // The machine's active animation instances: 0 while settled or in a
+    // non-animation state, 1 normally, 2+ only mid-blend (report the
+    // incoming one — the last — which is where playback is heading).
+    qreal t = 0.0;
+    QString timeline;
+    const std::size_t n = m_sm->currentAnimationCount();
+    if (n > 0)
+    {
+        const rive::LinearAnimationInstance* inst =
+            m_sm->currentAnimationByIndex(n - 1);
+        if (inst)
+        {
+            t = static_cast<qreal>(inst->time());
+            if (inst->animation())
+                timeline = QString::fromStdString(inst->animation()->name());
+        }
+    }
+    if (timeline != m_currentStateTimeline)
+    {
+        m_currentStateTimeline = timeline;
+        emit currentStateTimelineChanged();
+    }
+    if (t != m_currentStateTime)
+    {
+        m_currentStateTime = t;
+        emit currentStateTimeChanged();
     }
 }

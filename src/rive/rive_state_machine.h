@@ -40,6 +40,13 @@ class RiveStateMachine : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(QString name READ name CONSTANT)
+    // Playhead position within the state's timeline the machine is
+    // CURRENTLY advancing, in seconds. Both 0 while nothing is playing
+    // (entry / exit / blend / settled). Read-only — a state machine is a
+    // graph, not a scrubbable timeline; these exist so a host progress
+    // bar can measure playback, not drive it.
+    Q_PROPERTY(qreal currentStateTime READ currentStateTime NOTIFY currentStateTimeChanged)
+    Q_PROPERTY(QString currentStateTimeline READ currentStateTimeline NOTIFY currentStateTimelineChanged)
 
 public:
     // Mirrors rive::HitResult so QML can branch on pointer outcomes.
@@ -82,13 +89,23 @@ public:
     // authored in the editor against this state machine.
     void bindViewModelInstance(rive::rcp<rive::ViewModelInstance> instance);
 
+    qreal currentStateTime() const { return m_currentStateTime; }
+    QString currentStateTimeline() const { return m_currentStateTimeline; }
+
 signals:
     void stateChanged(const QString& layerName, const QString& stateName);
+    void currentStateTimeChanged();
+    void currentStateTimelineChanged();
 
 private:
     void drainStateChanges();
+    // Refresh the current-state playhead accessors from the machine's
+    // active animation; emits the change signals. Called from advance().
+    void publishCurrentState();
 
     std::unique_ptr<rive::StateMachineInstance> m_sm;
+    qreal m_currentStateTime = 0.0;
+    QString m_currentStateTimeline;
 };
 
 #endif // RIVE_STATE_MACHINE_H

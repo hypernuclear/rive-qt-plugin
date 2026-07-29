@@ -346,6 +346,16 @@ qreal RiveView::animationDuration(const QString& name) const
 {
     return m_artboard ? m_artboard->animationDuration(name) : 0.0;
 }
+
+QVariantMap RiveView::stateMachineGraph(const QString& name) const
+{
+    return m_artboard ? m_artboard->stateMachineGraph(name) : QVariantMap{};
+}
+
+bool RiveView::animationLoops(const QString& name) const
+{
+    return m_artboard ? m_artboard->animationLoops(name) : false;
+}
 QStringList RiveView::viewModelNames() const
 {
     if (!m_file)
