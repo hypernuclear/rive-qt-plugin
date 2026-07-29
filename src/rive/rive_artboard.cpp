@@ -97,6 +97,25 @@ QStringList RiveArtboard::animationNames() const
     return out;
 }
 
+qreal RiveArtboard::animationDuration(const QString& name) const
+{
+    if (!m_artboard || name.isEmpty())
+        return 0.0;
+    const std::size_t n = m_artboard->animationCount();
+    const std::string needle = name.toStdString();
+    for (std::size_t i = 0; i < n; ++i)
+    {
+        if (m_artboard->animationNameAt(i) != needle)
+            continue;
+        // animationAt() hands back an INSTANCE (a fresh playhead); the
+        // duration lives on the animation it wraps and costs nothing to read.
+        std::unique_ptr<rive::LinearAnimationInstance> inst = m_artboard->animationAt(i);
+        if (inst && inst->animation())
+            return static_cast<qreal>(inst->animation()->durationSeconds());
+        return 0.0;
+    }
+    return 0.0;
+}
 std::unique_ptr<rive::LinearAnimationInstance>
 RiveArtboard::createAnimation(const QString& name) const
 {

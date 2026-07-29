@@ -223,6 +223,10 @@ public:
     // Returns true if a load was scheduled (file present); the actual
     // bind result is observable via the `viewModel` property.
     Q_INVOKABLE bool bindViewModelInstance(const QString& name);
+    /// Duration of one of this artboard's animations, in SECONDS (0 if there
+    /// is no such animation). Readable WITHOUT loading the clip, so a host
+    /// sequencing several timelines can weight them by real length up front.
+    Q_INVOKABLE qreal animationDuration(const QString& name) const;
 
     // Process-wide font fallback. When a .riv references a font asset
     // that can't be resolved (no in-band bytes, hosted/referenced fetch

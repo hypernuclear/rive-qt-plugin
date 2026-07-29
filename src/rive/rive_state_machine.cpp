@@ -2,7 +2,9 @@
 
 #include <QString>
 
+#include <rive/animation/animation_state.hpp>
 #include <rive/animation/layer_state.hpp>
+#include <rive/animation/linear_animation.hpp>
 #include <rive/animation/state_machine_instance.hpp>
 #include <rive/hit_result.hpp>
 #include <rive/math/vec2d.hpp>
@@ -100,11 +102,23 @@ void RiveStateMachine::drainStateChanges()
         const rive::LayerState* state = m_sm->stateChangedByIndex(i);
         if (!state)
             continue;
-        // LayerState's name comes from its underlying animation/entry;
-        // we'd need a public accessor to get it reliably. For now emit
-        // the layer index (as string) + an empty state name. Revisit
-        // when we add state-name support (rive has the data, just needs
-        // a small accessor).
-        emit stateChanged(QString::number(i), QString());
+        // A LayerState carries no name of its own — StateMachineLayerComponent
+        // extends Core directly, and the file format has no name property for
+        // it. An AnimationState does know the timeline it plays, and THAT name
+        // is what the editor shows on the state, so it's the useful identity
+        // to report. Entry / Exit / Any states have no timeline and a blend
+        // state has several, so those stay unnamed rather than inventing a
+        // label callers could come to depend on.
+        QString stateName;
+        if (state->is<rive::AnimationState>())
+        {
+            if (const rive::LinearAnimation* anim =
+                    state->as<rive::AnimationState>()->animation())
+                stateName = QString::fromStdString(anim->name());
+        }
+        // First argument is the CHANGE index, not a layer name: rive reports
+        // state changes as a flat list across all layers, with no way to ask
+        // which layer each came from.
+        emit stateChanged(QString::number(i), stateName);
     }
 }

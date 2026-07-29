@@ -65,6 +65,10 @@ public:
     // (rive's web player and other runtimes do the same: SM → first
     // animation → static).
     QStringList animationNames() const;
+    /// Duration of the named animation in SECONDS, 0 when there's no such
+    /// animation. Lets a host weight a multi-clip sequence by real length
+    /// without having to load each clip to read its frame count.
+    qreal animationDuration(const QString& name) const;
 
     // Instantiate a linear animation. Empty name = first animation.
     // Returns null if the artboard has no animations or the name doesn't

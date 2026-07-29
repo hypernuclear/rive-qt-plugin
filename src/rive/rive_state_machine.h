@@ -19,6 +19,10 @@
 //   - Legacy Rive Events (runtime → host signals). Same story — use VM
 //     trigger properties' `triggered()` signal for runtime → host
 //     notifications.
+//
+// stateChanged() reports the TIMELINE name of the state that was entered (a
+// LayerState has no name of its own; see drainStateChanges). States with no
+// single timeline — entry / exit / any / blend — report an empty name.
 
 #include <QObject>
 #include <QPointF>

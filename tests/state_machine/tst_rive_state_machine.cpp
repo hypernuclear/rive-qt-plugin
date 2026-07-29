@@ -101,6 +101,24 @@ private slots:
         // At least the initial entry transition should have raised a state
         // change over this many frames.
         QVERIFY(spy.count() >= 1);
+        // Every emission carries the entered state's TIMELINE name where one
+        // exists (an AnimationState), and an empty string otherwise (entry /
+        // exit / any / blend states have no single timeline). Whichever this
+        // fixture produces, the name must be one the artboard actually
+        // enumerates — never a stray or truncated string.
+        const QStringList animations = ab->animationNames();
+        int named = 0;
+        for (const QList<QVariant>& emission : spy) {
+            const QString stateName = emission.at(1).toString();
+            if (!stateName.isEmpty()) {
+                ++named;
+                QVERIFY2(animations.contains(stateName), qPrintable(stateName));
+            }
+        }
+        // This fixture's transitions land on AnimationStates, so at least one
+        // emission must be named. Guards the regression where every state
+        // reported an empty string.
+        QVERIFY(named >= 1);
     }
 };
 
