@@ -31,6 +31,7 @@
 #include <QString>
 #include <QStringList>
 #include <QUrl>
+#include <QVariantMap>
 #include <QtQmlIntegration/qqmlintegration.h>
 
 #include <memory>
@@ -227,6 +228,12 @@ public:
     /// is no such animation). Readable WITHOUT loading the clip, so a host
     /// sequencing several timelines can weight them by real length up front.
     Q_INVOKABLE qreal animationDuration(const QString& name) const;
+    /// Whether the named animation repeats — see RiveArtboard::animationLoops.
+    Q_INVOKABLE bool animationLoops(const QString& name) const;
+    /// Static structure of a state machine's graph (states, transitions,
+    /// entry) — see RiveArtboard::stateMachineGraph. Empty map before the
+    /// file has loaded or when the machine doesn't exist.
+    Q_INVOKABLE QVariantMap stateMachineGraph(const QString& name) const;
 
     // Process-wide font fallback. When a .riv references a font asset
     // that can't be resolved (no in-band bytes, hosted/referenced fetch

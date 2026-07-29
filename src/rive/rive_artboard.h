@@ -16,6 +16,7 @@
 #include <QSizeF>
 #include <QString>
 #include <QStringList>
+#include <QVariantMap>
 
 #include <memory>
 
@@ -69,6 +70,27 @@ public:
     /// animation. Lets a host weight a multi-clip sequence by real length
     /// without having to load each clip to read its frame count.
     qreal animationDuration(const QString& name) const;
+
+    /// Whether the named animation repeats (loop or ping-pong in the .riv).
+    /// Readable WITHOUT loading the clip, same cost as animationDuration.
+    /// False on a miss — a one-shot answer would be a lie either way, and
+    /// "doesn't repeat" is the safe default for sequencing.
+    bool animationLoops(const QString& name) const;
+
+    /// Static structure of a state machine's graph, read WITHOUT
+    /// instantiating it — so a host can plan a whole sequence up front.
+    /// Returns a map:
+    ///   entry:       QString  — timeline name of the state the entry node
+    ///                points at ("" when it isn't a single AnimationState)
+    ///   states:      QStringList — timeline names of every AnimationState,
+    ///                in declaration order ("" for entry/exit/any/blend)
+    ///   transitions: QVariantList of {from, to} QString pairs — one entry
+    ///                per authored transition, resolved to timeline names
+    /// Both names in a transition may be "" (entry / exit / any states).
+    /// Empty map when the named machine doesn't exist. Only the FIRST
+    /// layer is reported — hosts driving a sequence use one layer, and a
+    /// flat map has nowhere to disambiguate a second.
+    QVariantMap stateMachineGraph(const QString& name) const;
 
     // Instantiate a linear animation. Empty name = first animation.
     // Returns null if the artboard has no animations or the name doesn't

@@ -130,6 +130,69 @@ private slots:
         QCOMPARE(ab->width(), ow);
         QCOMPARE(ab->height(), oh);
     }
+    void animationLoopsMatchesClipSetting()
+    {
+        auto ab = makeArtboard();
+        QVERIFY(ab);
+        // Cross-checked against the clip's own loop setting: whatever the
+        // fixture has, the accessor must agree with the animation it names.
+        const QStringList names = ab->animationNames();
+        QVERIFY(!names.isEmpty());
+        for (const QString& name : names)
+        {
+            std::unique_ptr<rive::LinearAnimationInstance> inst =
+                ab->createAnimation(name);
+            QVERIFY2(inst && inst->animation(), qPrintable(name));
+            const rive::Loop l = inst->animation()->loop();
+            const bool expected =
+                l == rive::Loop::loop || l == rive::Loop::pingPong;
+            QVERIFY2(ab->animationLoops(name) == expected, qPrintable(name));
+        }
+        // Misses and empty names are false, never a crash.
+        QVERIFY(!ab->animationLoops(QStringLiteral("definitely-not-an-animation")));
+        QVERIFY(!ab->animationLoops(QString()));
+    }
+
+    void stateMachineGraphMatchesMachine()
+    {
+        auto ab = makeArtboard();
+        QVERIFY(ab);
+        const QVariantMap graph =
+            ab->stateMachineGraph(QString::fromUtf8(kStateMachine));
+        QVERIFY(!graph.isEmpty());
+
+        // Every state the machine reports must be either an enumerated
+        // animation (an AnimationState) or "" (entry/exit/any/blend).
+        const QStringList animations = ab->animationNames();
+        const QStringList states =
+            graph.value(QStringLiteral("states")).toStringList();
+        QVERIFY(!states.isEmpty());
+        for (const QString& s : states)
+            QVERIFY(s.isEmpty() || animations.contains(s));
+
+        // The entry name (when named) must likewise be a real timeline,
+        // and every transition endpoint must be an enumerated animation or
+        // "" (an unnamed entry/exit/any endpoint).
+        const QString entry = graph.value(QStringLiteral("entry")).toString();
+        QVERIFY(entry.isEmpty() || animations.contains(entry));
+        const QVariantList edges =
+            graph.value(QStringLiteral("transitions")).toList();
+        QVERIFY(!edges.isEmpty());
+        for (const QVariant& e : edges)
+        {
+            const QVariantMap edge = e.toMap();
+            const QString from = edge.value(QStringLiteral("from")).toString();
+            const QString to = edge.value(QStringLiteral("to")).toString();
+            QVERIFY(from.isEmpty() || animations.contains(from));
+            QVERIFY(to.isEmpty() || animations.contains(to));
+        }
+
+        // Misses are an empty map, never a crash or a different machine.
+        QVERIFY(ab->stateMachineGraph(QStringLiteral("no-such-sm")).isEmpty());
+        // Reading the graph must not spin up an instance: the machine is
+        // still mintable afterwards.
+        QVERIFY(ab->createStateMachine(QString::fromUtf8(kStateMachine)) != nullptr);
+    }
 
     void missingTextRunReturnsFalse()
     {

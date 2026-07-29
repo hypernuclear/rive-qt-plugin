@@ -74,6 +74,38 @@ private slots:
         QVERIFY2(settled, "state machine never settled within 10s of frames");
     }
 
+    void currentStatePlayheadTracksAdvance()
+    {
+        auto ab = m_file->createArtboard(QString::fromUtf8(kArtboard));
+        QVERIFY(ab);
+        RiveStateMachine* sm = ab->createStateMachine(QString());
+        QVERIFY(sm);
+
+        // Before the first advance the machine hasn't entered anything.
+        QCOMPARE(sm->currentStateTimeline(), QString());
+        QCOMPARE(sm->currentStateTime(), 0.0);
+
+        // Once advancing, the reported timeline (when named) must be one
+        // the artboard enumerates, and the playhead must live inside the
+        // clip's real duration. The fixture's entry state is an
+        // AnimationState, so after the pose advance both are populated.
+        sm->advance(0.0f);
+        const QStringList animations = ab->animationNames();
+        const QString timeline = sm->currentStateTimeline();
+        QVERIFY2(animations.contains(timeline), qPrintable(timeline));
+        QVERIFY(sm->currentStateTime() >= 0.0);
+        QVERIFY(sm->currentStateTime() <= ab->animationDuration(timeline));
+
+        // Advancing moves the playhead forward (the state may loop, so
+        // assert against the cumulative direction over a few frames rather
+        // than a single strict increase).
+        const qreal before = sm->currentStateTime();
+        for (int i = 0; i < 10; ++i)
+            sm->advance(kFrame);
+        QVERIFY(sm->currentStateTime() != before
+                || sm->currentStateTimeline() != timeline);
+    }
+
     void bindViewModelThenAdvance()
     {
         auto ab = m_file->createArtboard(QString::fromUtf8(kArtboard));

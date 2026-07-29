@@ -98,6 +98,18 @@ private slots:
         QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
     }
 
+    // RiveView's half of the duration accessor. Only the no-source contract
+    // is checked here: a second QQuickWindow in this process can't get a Metal
+    // backend (see decodeImageUploadsTexture's skip), so a load-dependent
+    // assertion would skip forever rather than guard anything. The substantive
+    // lookup is covered headlessly in tst_rive_artboard.
+    void animationDurationWithoutSourceIsZero()
+    {
+        RiveView rv;
+        QCOMPARE(rv.animationDuration(QStringLiteral("anything")), 0.0);
+        QCOMPARE(rv.animationDuration(QString()), 0.0);
+    }
+
     void decodeImageUploadsTexture()
     {
         // Stand up the real Metal backend so we get a RiveQtFactory bound to a
@@ -155,13 +167,6 @@ private slots:
     // is checked here: a second QQuickWindow in this process can't get a Metal
     // backend (see decodeImageUploadsTexture's skip), so a load-dependent
     // assertion would skip forever rather than guard anything. The substantive
-    // lookup is covered headlessly in tst_rive_artboard.
-    void animationDurationWithoutSourceIsZero()
-    {
-        RiveView rv;
-        QCOMPARE(rv.animationDuration(QStringLiteral("anything")), 0.0);
-        QCOMPARE(rv.animationDuration(QString()), 0.0);
-    }
     void matchesGoldenSnapshot()
     {
         // Opt-in golden: skipped unless a baseline has been committed (run with

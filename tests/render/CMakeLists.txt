@@ -17,6 +17,7 @@ set_source_files_properties(tst_render_smoke.cpp
     TARGET_DIRECTORY tst_render_smoke
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>")
 
+add_test(NAME Render.animationDurationWithoutSourceIsZero COMMAND tst_render_smoke animationDurationWithoutSourceIsZero)
 add_test(NAME Render.decodeImageUploadsTexture COMMAND tst_render_smoke decodeImageUploadsTexture)
 add_test(NAME Render.rendersNonBlankFrame COMMAND tst_render_smoke rendersNonBlankFrame)
 add_test(NAME Render.matchesGoldenSnapshot COMMAND tst_render_smoke matchesGoldenSnapshot)
