@@ -342,6 +342,10 @@ QStringList RiveView::animationNames() const
     return m_artboard ? m_artboard->animationNames() : QStringList{};
 }
 
+qreal RiveView::animationDuration(const QString& name) const
+{
+    return m_artboard ? m_artboard->animationDuration(name) : 0.0;
+}
 QStringList RiveView::viewModelNames() const
 {
     if (!m_file)
