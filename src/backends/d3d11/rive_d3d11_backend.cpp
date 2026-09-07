@@ -35,6 +35,7 @@
 #include <QRunnable>
 #include <QSGRendererInterface>
 #include <QSGTexture>
+#include <unordered_map>
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
 
@@ -98,7 +99,8 @@ struct RiveD3D11Backend::Impl
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
 
-    std::unique_ptr<rive::gpu::RenderContext> renderContext;
+    std::shared_ptr<rive::gpu::RenderContext> renderContext;
+    std::shared_ptr<uint64_t> sharedFrameNumber;
     std::unique_ptr<RiveQtFactory> factory;
     rive::rcp<rive::gpu::RenderTargetD3D> renderTarget;
 
@@ -202,8 +204,25 @@ bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
 
     rive::gpu::D3DContextOptions opts;
     opts.isIntel = detectIntelGpu(m_impl->device.Get());
-    m_impl->renderContext = rive::gpu::RenderContextD3DImpl::MakeContext(
-        m_impl->device, m_impl->context, opts);
+    // Views rendered sequentially on the same QRhi share the expensive Rive
+    // pipelines. Weak ownership releases them with the last view; nothing is
+    // persisted across windows, threads, or application launches.
+    struct Entry {
+        std::weak_ptr<rive::gpu::RenderContext> context;
+        std::weak_ptr<uint64_t> frameNumber;
+    };
+    static thread_local std::unordered_map<QRhi*, Entry> contexts;
+    auto &entry = contexts[rhi];
+    m_impl->renderContext = entry.context.lock();
+    m_impl->sharedFrameNumber = entry.frameNumber.lock();
+    if (!m_impl->renderContext) {
+        m_impl->renderContext = rive::gpu::RenderContextD3DImpl::MakeContext(
+            m_impl->device, m_impl->context, opts);
+        if (m_impl->renderContext) {
+            m_impl->sharedFrameNumber = std::make_shared<uint64_t>(0);
+            entry = { m_impl->renderContext, m_impl->sharedFrameNumber };
+        }
+    }
     if (!m_impl->renderContext)
     {
         setError(QStringLiteral(
@@ -345,14 +364,17 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
 
     m_impl->renderTarget->setTargetTexture(m_impl->targetTexture);
 
-    m_impl->currentFrameNumber += 1;
+    m_impl->currentFrameNumber = ++*m_impl->sharedFrameNumber;
     rive::gpu::RenderContext::FlushResources flushRes;
     flushRes.renderTarget = m_impl->renderTarget.get();
     // externalCommandBuffer left null — D3D11 issues to the immediate
     // context, no per-frame command-buffer handoff.
     flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-    flushRes.safeFrameNumber =
-        m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
+    // A shared context may flush several views in one Qt frame. Keep four
+    // frames' worth of per-view resources before reusing GPU buffer storage.
+    const uint64_t retained = 4 * uint64_t(m_impl->renderContext.use_count());
+    flushRes.safeFrameNumber = m_impl->currentFrameNumber > retained
+        ? m_impl->currentFrameNumber - retained : 0;
     m_impl->renderContext->flush(flushRes);
 
     // Drop the ComPtr ref so the next ensureTexture can replace the

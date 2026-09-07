@@ -32,12 +32,14 @@ namespace {
 struct FileCache
 {
     QMutex mutex;
-    QHash<QUrl, std::weak_ptr<RiveFile>> entries;
+    QHash<QPair<quintptr, QUrl>, std::weak_ptr<RiveFile>> entries;
 };
 
 FileCache& cache()
 {
-    static FileCache c;
+    // GPU assets belong to their importing factory and render thread. A
+    // retiring window must never lend its textures to a newly opened one.
+    static thread_local FileCache c;
     return c;
 }
 
@@ -115,7 +117,7 @@ std::shared_ptr<RiveFile> RiveFile::fromUrl(const QUrl& url,
     {
         auto& c = cache();
         QMutexLocker lock(&c.mutex);
-        if (auto it = c.entries.find(url); it != c.entries.end())
+        if (auto it = c.entries.find({quintptr(factory), url}); it != c.entries.end())
         {
             if (auto existing = it->lock())
                 return existing;
@@ -167,7 +169,7 @@ std::shared_ptr<RiveFile> RiveFile::fromBytes(const QUrl& url,
 
     // Cache hit (still alive) — another view already decoded this URL;
     // reuse it and discard the bytes we were handed.
-    if (auto it = c.entries.find(url); it != c.entries.end())
+    if (auto it = c.entries.find({quintptr(factory), url}); it != c.entries.end())
     {
         if (auto existing = it->lock())
             return existing;
@@ -217,7 +219,7 @@ std::shared_ptr<RiveFile> RiveFile::fromBytes(const QUrl& url,
     std::shared_ptr<RiveFile> wrapped(new RiveFile(), [](RiveFile* p) { delete p; });
     wrapped->m_file = imported;
     wrapped->m_assetLoader = assetLoader;
-    c.entries.insert(url, wrapped);
+    c.entries.insert({quintptr(factory), url}, wrapped);
 
 #ifdef WITH_RIVE_SCRIPTING
     // Diagnostic: enumerate script assets so we can see what got

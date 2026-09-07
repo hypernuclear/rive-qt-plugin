@@ -123,6 +123,9 @@ RiveView::RiveView(QQuickItem* parent) : QQuickItem(parent)
     setFlag(ItemAcceptsInputMethod, true);
     setActiveFocusOnTab(true);
     m_frameTimer.start();
+    connect(this, &QQuickItem::visibleChanged, this, [this] {
+        if (m_deferredRendering) update();
+    });
 }
 
 RiveView::~RiveView() = default;
@@ -484,6 +487,9 @@ void RiveView::onBeforeSynchronizing()
 
 void RiveView::onSceneGraphInvalidated()
 {
+    m_renderPending = false;
+    m_preparedFile.reset();
+    m_preparedUrl.clear();
     if (m_backend)
         m_backend->abandonGraphicsResources();
     m_backend.reset();
@@ -823,8 +829,9 @@ void RiveView::tryLoad()
         m_loadedUrl = m_source;
         QString err;
         // Import from the already-fetched bytes — no IO on the render thread.
-        auto file =
-            RiveFile::fromBytes(m_source, m_sourceBytes, m_backend->factory(), &err);
+        auto file = m_preparedUrl == m_source ? m_preparedFile : nullptr;
+        if (!file)
+            file = RiveFile::fromBytes(m_source, m_sourceBytes, m_backend->factory(), &err);
         if (!file)
         {
             qCWarning(lcRiveView) << "Load failed:" << err;
@@ -1218,6 +1225,54 @@ void RiveView::keyReleaseEvent(QKeyEvent* event)
     }
 }
 
+void RiveView::snapshotRenderPreparation(qreal dpr)
+{
+    // Called only while the render worker is idle. Hidden decorative views
+    // can now skip paint-node initialization until a visible frame needs them.
+    m_deferredRendering = true;
+    m_preparationSource = m_source;
+    m_preparationBytes = m_sourceBytesReady ? m_sourceBytes : QByteArray();
+    m_preparationPixelSize = QSize(int(std::ceil(width() * dpr)), int(std::ceil(height() * dpr)));
+}
+
+bool RiveView::prepareRenderBackend(QQuickWindow* win)
+{
+    connect(win, &QQuickWindow::beforeRendering, this, &RiveView::renderPendingFrame,
+            static_cast<Qt::ConnectionType>(Qt::DirectConnection | Qt::UniqueConnection));
+    QString err;
+    if (!m_backend)
+        m_backend = RiveRenderBackend::create(win, &err);
+    if (!m_backend || (!m_backendReady && !m_backend->initialize(win, &err))) {
+        qCWarning(lcRiveView) << "Backend init failed:" << err;
+        emit loadFailed(err);
+        return false;
+    }
+    m_backendReady = true;
+    if (m_preparedUrl != m_preparationSource && !m_preparationBytes.isEmpty()) {
+        m_preparedFile = RiveFile::fromBytes(m_preparationSource, m_preparationBytes,
+                                            m_backend->factory(), &err);
+        if (!m_preparedFile) {
+            emit loadFailed(err);
+            return false;
+        }
+        m_preparedUrl = m_preparationSource;
+    }
+    // Resizing a native target can wait for the driver too. Allocate before
+    // sync so moving between display scales leaves the GUI free to run.
+    if (!m_preparationPixelSize.isEmpty() && !m_backend->ensureTexture(m_preparationPixelSize))
+        return false;
+    return true;
+}
+
+void RiveView::renderPendingFrame()
+{
+    if (!m_renderPending || !m_backend || !m_artboard)
+        return;
+    m_renderPending = false;
+    m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_renderFit),
+                           toBackendAlignment(m_renderAlignment));
+}
+
 QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
 {
     auto* node = static_cast<QSGSimpleTextureNode*>(oldNode);
@@ -1229,6 +1284,8 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
         delete node;
         return nullptr;
     }
+    if (m_deferredRendering && !isVisible())
+        return node;
 
     // Frame driving normally hooks up in itemChange(ItemSceneChange), but an
     // item used as a Texture.sourceItem / ShaderEffectSource has no visual
@@ -1421,8 +1478,14 @@ QSGNode* RiveView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*)
             ? QSGSimpleTextureNode::MirrorVertically
             : QSGSimpleTextureNode::NoTransform);
 
-    m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_fit),
-                           toBackendAlignment(m_alignment));
+    if (m_deferredRendering) {
+        m_renderFit = m_fit;
+        m_renderAlignment = m_alignment;
+        m_renderPending = true;
+    } else {
+        m_backend->renderFrame(m_artboard->raw(), toBackendFit(m_fit),
+                               toBackendAlignment(m_alignment));
+    }
 
     if (m_playing && !m_settled)
         update();
