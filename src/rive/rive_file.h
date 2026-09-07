@@ -1,44 +1,12 @@
 #ifndef RIVE_FILE_H
 #define RIVE_FILE_H
 
-// RiveFile — shared handle to a parsed .riv file.
+// Shared parsed .riv data, cached weakly by URL and graphics factory on the
+// importing render thread. Files contain GPU assets: independent renderers
+// must import against their own factory. Each view owns its artboard/VM;
+// the parsed file expires when its final consumer releases it.
 //
-// Not a QObject. Kept as a plain class so we can manage it with
-// std::shared_ptr + a process-wide std::weak_ptr cache keyed by URL.
-// The pattern:
-//
-//   auto file = RiveFile::fromUrl(url, factory, &err);
-//   auto artboard = file->createArtboard("main");
-//
-// Multiple RiveView instances pointing at the same URL share a single
-// RiveFile — decoded exactly once. When the last view releases its
-// shared_ptr, the cache entry's weak_ptr expires and the next fromUrl()
-// call re-decodes fresh.
-//
-// Threading: the process-wide cache is mutex-guarded, and every method
-// that mints instances or enumerates the file (createArtboard,
-// createViewModelInstance, artboardNames, viewModelNames, ...) takes a
-// per-file lock. This matters because RiveFile is shared across views by
-// URL: two RiveViews in *different* windows run on *different* render
-// threads, and rive's File mints instances by bumping non-atomic rcp
-// refcounts on shared assets — concurrent instancing without the lock
-// would corrupt those counts. The lock serializes that cross-window
-// minting (within one window the scene-graph sync barrier already
-// serializes access).
-//
-// `raw()` hands out the bare rive::File* and is NOT covered by the lock —
-// callers (the VM property wrappers resolving assets) must only touch it
-// from their own window's render thread. Cross-window concurrent use of
-// raw() is the one remaining unguarded path; revisit if a view-model
-// genuinely needs to share a file across windows.
-//
-// Factory caveat (phase 1): the rive::Factory passed in is typically
-// the backend-specific RenderContext. If two views share a URL but use
-// different factories, the second would pick up artboards decoded
-// against the first factory — wrong texture/buffer backends. On macOS
-// + Metal only (today) there's always one factory so this is fine.
-// If we add a second backend we'll need to key the cache on (url,
-// factory-identity).
+// raw() is borrowed and must only be used on the owning render thread.
 
 #include <QByteArray>
 #include <QMutex>

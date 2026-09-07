@@ -3,7 +3,8 @@
 #   - unit/        pure helpers (no rive, no GPU)
 #   - file/ artboard/ state_machine/ view_model/ asset_loader/
 #                  headless wrapper-contract tests via rive::NoOpFactory
-#   - render/      offscreen Metal render smoke (APPLE only)
+#   - render/      offscreen Metal smoke (APPLE); D3D11 completion tracking
+#                  on WARP (WIN32, no display or Qt runtime required)
 #
 # Each test links the `rive_qt` wrapper lib + the `rive` INTERFACE target
 # (which carries the runtime include roots AND the ABI-gating defines —
@@ -87,6 +88,13 @@ add_subdirectory(artboard)
 add_subdirectory(state_machine)
 add_subdirectory(view_model)
 add_subdirectory(asset_loader)
+
+if(WIN32)
+    add_executable(tst_d3d11_frame_tracker render/tst_d3d11_frame_tracker.cpp)
+    target_compile_features(tst_d3d11_frame_tracker PRIVATE cxx_std_17)
+    target_link_libraries(tst_d3d11_frame_tracker PRIVATE d3d11)
+    add_test(NAME D3D11FrameTracker COMMAND tst_d3d11_frame_tracker)
+endif()
 
 # Render smoke is Metal/macOS-only today (the only backend built on Apple).
 if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/render/CMakeLists.txt")
