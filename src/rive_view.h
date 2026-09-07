@@ -28,7 +28,6 @@
 #include <QElapsedTimer>
 #include <QPointer>
 #include <QQuickItem>
-#include <QQuickWindow>
 #include <QString>
 #include <QStringList>
 #include <QUrl>
@@ -122,10 +121,6 @@ class RiveView : public QQuickItem
                    NOTIFY alignmentChanged)
 
 public:
-    // Render-thread-only preflight for a QQuickRenderControl owner. The owner
-    // must retain this item until preflight finishes. Does not read QML state.
-    Q_INVOKABLE bool prepareRenderBackend(QQuickWindow* window);
-    Q_INVOKABLE void snapshotRenderPreparation(qreal dpr); // GUI thread, while render worker is idle
     // Mirrors rive::Fit. `Layout` defers entirely to Rive's responsive
     // layout system — pair with `layoutSize` to drive the artboard's
     // runtime width/height directly.
@@ -310,7 +305,6 @@ protected:
 
 private slots:
     void onBeforeSynchronizing();
-    void renderPendingFrame();
     void onSceneGraphInvalidated();
 
 private:
@@ -409,14 +403,6 @@ private:
 
     std::unique_ptr<RiveRenderBackend> m_backend;
     bool m_backendReady = false;
-    QUrl m_preparationSource, m_preparedUrl;
-    QByteArray m_preparationBytes;
-    QSize m_preparationPixelSize;
-    std::shared_ptr<RiveFile> m_preparedFile;
-    bool m_deferredRendering = false;
-    bool m_renderPending = false;
-    Fit m_renderFit = Fit::Contain;
-    Alignment m_renderAlignment = Alignment::Center;
 
     std::shared_ptr<RiveFile> m_file;
 
