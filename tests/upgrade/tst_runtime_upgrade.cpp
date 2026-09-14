@@ -5,10 +5,15 @@
 #include <QJsonObject>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
+#include <QSurfaceFormat>
+#if QT_CONFIG(vulkan)
+#include <QVulkanInstance>
+#include <QQuickGraphicsConfiguration>
+#endif
 #include <QSignalSpy>
 #include <QTest>
 #include <QTransform>
-#if defined(Q_OS_MACOS) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 #include <QQuickRenderControl>
 #include <QQuickRenderTarget>
 #include <QScopeGuard>
@@ -54,7 +59,7 @@ bool scriptingAvailable()
     return false;
 #endif
 }
-#if defined(Q_OS_MACOS) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
 QString triangleError(const QImage& image)
 {
     if (image.isNull())
@@ -97,9 +102,26 @@ class TstRuntimeUpgrade : public QObject
 private slots:
     void initTestCase()
     {
-#ifdef Q_OS_MACOS
-        QQuickWindow::setGraphicsApi(QSGRendererInterface::Metal);
-#endif
+        const auto backend = qEnvironmentVariable("RIVE_QT_TEST_BACKEND");
+        if (backend.isEmpty())
+            return; // Import-only invocations do not need a graphics device.
+        const QMap<QString, QSGRendererInterface::GraphicsApi> apis{
+            {"metal", QSGRendererInterface::Metal},
+            {"d3d11", QSGRendererInterface::Direct3D11},
+            {"d3d12", QSGRendererInterface::Direct3D12},
+            {"opengl", QSGRendererInterface::OpenGL},
+            {"vulkan", QSGRendererInterface::Vulkan}};
+        QVERIFY2(apis.contains(backend), "Unknown RIVE_QT_TEST_BACKEND");
+        m_requestedApi = apis[backend];
+        QQuickWindow::setGraphicsApi(m_requestedApi);
+        if (backend == "opengl") {
+            QSurfaceFormat format;
+            format.setVersion(4, 3);
+            format.setProfile(QSurfaceFormat::CoreProfile);
+            format.setDepthBufferSize(24);
+            format.setStencilBufferSize(8);
+            QSurfaceFormat::setDefaultFormat(format);
+        }
     }
 
     void importsAndAdvances_data() { sampleRows(); }
@@ -184,7 +206,7 @@ private slots:
         QVERIFY2(qAbs(height - 292.81f) < 0.5f, qPrintable(QString::number(height)));
     }
 
-#if defined(Q_OS_MACOS) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
     void rendersSample_data() { sampleRows(); }
 
     void rendersSample()
@@ -205,8 +227,22 @@ private:
         // Hidden QQuickWindow::grabWindow() can recreate the scene graph on
         // every capture, resetting the animation. RenderControl keeps one
         // GPU context alive while we explicitly render and read back frames.
+#if QT_CONFIG(vulkan)
+        // RenderControl has no native window from which Qt can obtain an instance.
+        // It must outlive both the window and the render control.
+        QVulkanInstance instance;
+        if (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan) {
+            instance.setExtensions(QQuickGraphicsConfiguration::preferredInstanceExtensions());
+            instance.setApiVersion(QVersionNumber(1, 3));
+            QVERIFY2(instance.create(), "Could not create the requested Vulkan instance");
+        }
+#endif
         QQuickRenderControl control;
         QQuickWindow window(&control);
+#if QT_CONFIG(vulkan)
+        if (instance.isValid())
+            window.setVulkanInstance(&instance);
+#endif
         window.resize(640, 480);
         window.setColor(QColor("#0a0a0a"));
         auto* view = new RiveView(window.contentItem());
@@ -217,10 +253,15 @@ private:
         view->setViewModelInstanceName(sample["instance"].toString());
         QSignalSpy failed(view, &RiveView::loadFailed);
         view->setSource(QUrl::fromLocalFile(samplePath(sample["file"].toString())));
-        if (!control.initialize())
-            QSKIP("Offscreen Metal rendering unavailable on this host");
+        // A backend-specific test must fail if that backend cannot initialize;
+        // silently skipping would let unsupported GPU canvas paths pass CI.
+        QVERIFY2(control.initialize(), "Could not initialize the requested graphics backend");
+        if (m_requestedApi != QSGRendererInterface::Unknown)
+            QCOMPARE(window.rendererInterface()->graphicsApi(), m_requestedApi);
         auto* rhi = control.rhi();
         QVERIFY(rhi);
+        qInfo() << "Rendering with" << window.rendererInterface()->graphicsApi()
+                << rhi->driverInfo().deviceName;
         const QSize size(640, 480);
         std::unique_ptr<QRhiTexture> texture(rhi->newTexture(QRhiTexture::RGBA8, size, 1,
             QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
@@ -283,8 +324,10 @@ private:
 
         const QString snapshots = qEnvironmentVariable("RIVE_QT_SAMPLE_SNAPSHOT_DIR");
         if (!snapshots.isEmpty()) {
-            QVERIFY(QDir().mkpath(snapshots));
-            QVERIFY(last.save(QDir(snapshots).filePath(sample["id"].toString() + ".png")));
+            const auto directory = QDir(snapshots).filePath(
+                qEnvironmentVariable("RIVE_QT_TEST_BACKEND", "default"));
+            QVERIFY(QDir().mkpath(directory));
+            QVERIFY(last.save(QDir(directory).filePath(sample["id"].toString() + ".png")));
         }
         if (sample["checkTriangle"].toBool()) {
             QString error = triangleError(last);
@@ -319,6 +362,8 @@ private:
         }
     }
 #endif
+private:
+    QSGRendererInterface::GraphicsApi m_requestedApi = QSGRendererInterface::Unknown;
 };
 
 QTEST_MAIN(TstRuntimeUpgrade)

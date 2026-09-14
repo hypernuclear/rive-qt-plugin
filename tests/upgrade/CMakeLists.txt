@@ -3,9 +3,7 @@ qt_add_executable(tst_runtime_upgrade
     "${RIVE_RUNTIME_DIR}/utils/no_op_factory.cpp")
 target_link_libraries(tst_runtime_upgrade PRIVATE
     Qt6::Test Qt6::Quick rive_qt rive riveqt_test_helpers)
-if(APPLE)
-    target_link_libraries(tst_runtime_upgrade PRIVATE Qt6::GuiPrivate)
-endif()
+target_link_libraries(tst_runtime_upgrade PRIVATE Qt6::GuiPrivate)
 target_include_directories(tst_runtime_upgrade PRIVATE
     "${PROJECT_SOURCE_DIR}/src" "${PROJECT_SOURCE_DIR}/src/rive")
 target_compile_options(tst_runtime_upgrade PRIVATE
@@ -17,6 +15,21 @@ target_compile_definitions(tst_runtime_upgrade PRIVATE
 
 # One process per fixture. The same catalog powers the viewer and these
 # regression cases. Persistent offscreen capture uses Qt 6.6's QRhi API.
+set(_gpu_backends)
+if(APPLE)
+    list(APPEND _gpu_backends metal)
+elseif(WIN32)
+    list(APPEND _gpu_backends d3d11 opengl)
+    if(RIVE_QT_WITH_D3D12)
+        list(APPEND _gpu_backends d3d12)
+    endif()
+else()
+    list(APPEND _gpu_backends opengl)
+endif()
+if(RIVE_QT_WITH_VULKAN)
+    list(APPEND _gpu_backends vulkan)
+endif()
+
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${_catalog}")
 file(READ "${_catalog}" _json)
 string(JSON _count LENGTH "${_json}" samples)
@@ -30,12 +43,15 @@ foreach(_index RANGE 0 ${_last})
         set_tests_properties(UpgradeSamples.import.${_id} PROPERTIES
             ENVIRONMENT "QT_QPA_PLATFORM=offscreen" LABELS "runtime-upgrade")
     endif()
-    if(APPLE AND Qt6_VERSION VERSION_GREATER_EQUAL 6.6)
-        add_test(NAME UpgradeSamples.render.${_id}
-            COMMAND tst_runtime_upgrade rendersSample:${_id})
-        set_tests_properties(UpgradeSamples.render.${_id} PROPERTIES
-            LABELS "runtime-upgrade;gpu" TIMEOUT 30
-            FAIL_REGULAR_EXPRESSION "requires the deferred recorder;rive deferred:.*([Dd][Rr][Oo][Pp]|TRIPWIRE)")
+    if(Qt6_VERSION VERSION_GREATER_EQUAL 6.6)
+        foreach(_backend IN LISTS _gpu_backends)
+            add_test(NAME UpgradeSamples.render.${_backend}.${_id}
+                COMMAND tst_runtime_upgrade rendersSample:${_id})
+            set_tests_properties(UpgradeSamples.render.${_backend}.${_id} PROPERTIES
+                ENVIRONMENT "RIVE_QT_TEST_BACKEND=${_backend}"
+                LABELS "runtime-upgrade;gpu;${_backend}" TIMEOUT 60
+                FAIL_REGULAR_EXPRESSION "requires the deferred recorder;rive deferred:.*([Dd][Rr][Oo][Pp]|TRIPWIRE);Validation Error;D3D12 ERROR;D3D11 ERROR")
+        endforeach()
     endif()
 endforeach()
 

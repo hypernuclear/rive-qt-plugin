@@ -122,6 +122,8 @@ Rather than reimplement Rive's path/feather/clip semantics on top of `QPainter`,
 | Windows         | D3D11, D3D12                                |
 | Linux / other   | OpenGL, Vulkan                              |
 
+Upstream also offers WebGPU (Dawn/wagyu), but [Qt 6.11's scene graph](https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph-renderer.html) has no WebGPU backend. Supporting it here requires a separate device/texture interop path. Upstream's RHI adapter targets Unreal Engine.
+
 Vulkan is opt-in everywhere (`RIVE_QT_WITH_VULKAN`, on by default) and auto-disables when the host Qt was built without Vulkan support. See the options block at the top of `CMakeLists.txt` for the full backend/audio/scripting matrix.
 
 ### Quirk: `-fno-rtti`
@@ -130,7 +132,7 @@ Rive is built with RTTI off (see `rive_build_config.lua` — "nonstandard for Ri
 
 ## Known limitations / TODO
 
-- **GPU canvas**: implemented on Metal through Rive's deferred recorder and inline replay. The viewer includes a shader triangle check. Other graphics backends still use direct rendering and need this integration before they can run GPU canvas scripts.
+- **GPU canvas**: all five backend adapters use Rive's deferred recorder and inline replay. The viewer includes a shader triangle check, with backend-specific render tests for colors, orientation, resize, reload, and window recreation. See [sample checks](examples/viewer/samples/README.md) for commands and validation limits.
 
 - **Idle repaints**: mitigated — the advance return value gates the repaint loop, so an artboard that reaches a settled/static state stops requesting frames instead of spinning the render loop.
 - **Hosted/referenced asset fetches still block**: the `.riv` *source* itself is now fetched off the render thread (`http(s)://` asynchronously on the GUI thread, `qrc`/`file` read inline before paint), so a remote source no longer stalls the UI. But *hosted/referenced assets* (images/fonts/audio not embedded in the `.riv`) are still resolved synchronously by the asset loader during import on the render thread — a `.riv` that pulls large CDN assets can still hitch on first load. Embed assets, or keep them small, until async asset loading lands.

@@ -4,8 +4,8 @@
         {
             "id": "gpu-canvas",
             "file": "gpu_canvas.riv",
-            "title": "GPU canvas triangle (Metal)",
-            "instructions": "Expect a triangle with a red top, green bottom-left, and blue bottom-right on a dark square. This sample is static. Resize the viewer and reload the file: the triangle should remain visible and correctly oriented. Requires the Metal backend and scripting enabled.",
+            "title": "GPU canvas triangle",
+            "instructions": "Expect a triangle with a red top, green bottom-left, and blue bottom-right on a dark square. This sample is static. Resize the viewer and reload the file: the triangle should remain visible and correctly oriented. Requires a supported GPU backend and scripting enabled.",
             "requiresScripting": true,
             "requiresGpu": true,
             "checkTriangle": true

@@ -34,7 +34,7 @@
 #include "rive_d3d12_backend.h"
 
 #include "../rive_render_backend_helpers.h"
-#include "../../rive/rive_qt_factory.h"
+#include "../rive_deferred_renderer.h"
 
 #include <QLoggingCategory>
 #include <QPointer>
@@ -108,7 +108,7 @@ struct RiveD3D12Backend::Impl
     ComPtr<ID3D12CommandQueue> commandQueue; // borrowed from Qt; AddRef'd
 
     std::unique_ptr<rive::gpu::RenderContext> renderContext;
-    std::unique_ptr<RiveQtFactory> factory;
+    std::unique_ptr<RiveDeferredRenderer> deferred;
     rive::rcp<rive::gpu::RenderTargetD3D12> renderTarget;
 
     ComPtr<ID3D12Resource> targetTexture;
@@ -125,6 +125,8 @@ struct RiveD3D12Backend::Impl
     UINT64 nextFrameFenceValue = 1;
     int frameSlot = 0;
     uint64_t currentFrameNumber = 0;
+    uint64_t safeFrameNumber = 0;
+    uint64_t resourceFrames[kFramesInFlight] = {};
 
     rive::gpu::RenderContextD3D12Impl* d3d12Impl() const
     {
@@ -279,6 +281,7 @@ struct RiveD3D12Backend::Impl
             cmdLists[i].Reset();
             cmdAllocators[i].Reset();
             frameFenceValues[i] = 0;
+            resourceFrames[i] = 0;
         }
         if (frameFenceEvent)
         {
@@ -287,6 +290,7 @@ struct RiveD3D12Backend::Impl
         }
         frameFence.Reset();
         nextFrameFenceValue = 1;
+        currentFrameNumber = safeFrameNumber = 0;
         frameSlot = 0;
     }
 
@@ -327,7 +331,7 @@ RiveD3D12Backend::~RiveD3D12Backend()
     m_impl->waitForGpuIdle();
     // Drop rive state before the device disappears. Factory borrows
     // the RenderContext so it goes first.
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->scheduleTextureCleanup(/*sync=*/true);
@@ -336,7 +340,7 @@ RiveD3D12Backend::~RiveD3D12Backend()
 
 bool RiveD3D12Backend::initialize(QQuickWindow* window, QString* errorOut)
 {
-    if (m_impl->window == window && m_impl->renderContext)
+    if (m_impl->window == window && m_impl->deferred)
         return true;
 
     auto setError = [&](const QString& msg) {
@@ -391,8 +395,9 @@ bool RiveD3D12Backend::initialize(QQuickWindow* window, QString* errorOut)
     if (!m_impl->createBootstrapAndContext(opts, errorOut))
         return false;
 
-    m_impl->factory =
-        std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+    m_impl->deferred = RiveDeferredRenderer::create(m_impl->renderContext.get(), errorOut);
+    if (!m_impl->deferred)
+        return false;
 
     qCInfo(lcRiveD3D12Backend) << "Initialized" << (opts.isIntel ? "(Intel)" : "");
     return true;
@@ -400,12 +405,12 @@ bool RiveD3D12Backend::initialize(QQuickWindow* window, QString* errorOut)
 
 bool RiveD3D12Backend::isInitialized() const
 {
-    return m_impl->renderContext != nullptr;
+    return m_impl->deferred != nullptr;
 }
 
 rive::Factory* RiveD3D12Backend::factory() const
 {
-    return m_impl->factory.get();
+    return m_impl->deferred ? m_impl->deferred->factory() : nullptr;
 }
 
 QSGTexture* RiveD3D12Backend::ensureTexture(const QSize& pixelSize)
@@ -518,16 +523,32 @@ void RiveD3D12Backend::renderFrame(rive::ArtboardInstance* artboard,
         !m_impl->targetTexture)
         return;
 
-    // Wait for this slot's previous use to complete before recycling
-    // the allocator + command list.
+    // Ore currently reuses one GPU-visible descriptor heap across frames.
+    // Drain its previous submission before replay can overwrite that heap.
+    // Ordinary 2D views retain the command-list ring's overlap.
     const int slot = m_impl->frameSlot;
+    const int previous = (slot + kFramesInFlight - 1) % kFramesInFlight;
+    if (m_impl->deferred->usesOre() && m_impl->frameFenceValues[previous] != 0) {
+        const UINT64 value = m_impl->frameFenceValues[previous];
+        if (m_impl->frameFence->GetCompletedValue() < value) {
+            if (FAILED(m_impl->frameFence->SetEventOnCompletion(value, m_impl->frameFenceEvent))
+                || WaitForSingleObject(m_impl->frameFenceEvent, INFINITE) != WAIT_OBJECT_0)
+                return;
+        }
+        m_impl->safeFrameNumber = qMax(m_impl->safeFrameNumber, m_impl->resourceFrames[previous]);
+    }
+    // Wait for this slot before recycling its allocator and command list.
     if (m_impl->frameFenceValues[slot] != 0 &&
         m_impl->frameFence->GetCompletedValue() < m_impl->frameFenceValues[slot])
     {
-        m_impl->frameFence->SetEventOnCompletion(m_impl->frameFenceValues[slot],
-                                                 m_impl->frameFenceEvent);
-        WaitForSingleObject(m_impl->frameFenceEvent, INFINITE);
+        if (FAILED(m_impl->frameFence->SetEventOnCompletion(
+                m_impl->frameFenceValues[slot], m_impl->frameFenceEvent))
+            || WaitForSingleObject(m_impl->frameFenceEvent, INFINITE) != WAIT_OBJECT_0)
+            return;
     }
+
+    // The slot fence covers every canvas and screen flush in that submission.
+    m_impl->safeFrameNumber = qMax(m_impl->safeFrameNumber, m_impl->resourceFrames[slot]);
 
     if (FAILED(m_impl->cmdAllocators[slot]->Reset()))
         return;
@@ -549,38 +570,31 @@ void RiveD3D12Backend::renderFrame(rive::ArtboardInstance* artboard,
     const uint32_t w = m_impl->renderTarget->width();
     const uint32_t h = m_impl->renderTarget->height();
 
-    rive::gpu::RenderContext::FrameDescriptor frameDesc;
-    frameDesc.renderTargetWidth = w;
-    frameDesc.renderTargetHeight = h;
-    frameDesc.loadAction = rive::gpu::LoadAction::clear;
-    frameDesc.clearColor = 0;
-    m_impl->renderContext->beginFrame(frameDesc);
-
-    rive::RiveRenderer renderer(m_impl->renderContext.get());
-    renderer.save();
-
-    const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
-                           static_cast<float>(h));
-    renderer.align(rive_qt::toRiveFit(fit),
-                   rive_qt::toRiveAlignment(alignment),
-                   frame, artboard->bounds());
-    artboard->draw(&renderer);
-    renderer.restore();
-
     m_impl->renderTarget->setTargetTexture(m_impl->targetTexture);
 
-    m_impl->currentFrameNumber += 1;
     rive::gpu::RenderContextD3D12Impl::CommandLists cmdLists{};
-    cmdLists.copyComandList = nullptr; // direct list handles copies too
+    cmdLists.copyComandList = nullptr;
     cmdLists.directComandList = cmd;
-
-    rive::gpu::RenderContext::FlushResources flushRes;
-    flushRes.renderTarget = m_impl->renderTarget.get();
-    flushRes.externalCommandBuffer = &cmdLists;
-    flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-    flushRes.safeFrameNumber =
-        m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
-    m_impl->renderContext->flush(flushRes);
+    const auto flush = [&](rive::gpu::RenderTarget* target) {
+        rive::gpu::RenderContext::FlushResources flushRes;
+        flushRes.renderTarget = target;
+        flushRes.externalCommandBuffer = &cmdLists;
+        flushRes.currentFrameNumber = ++m_impl->currentFrameNumber;
+        flushRes.safeFrameNumber = m_impl->safeFrameNumber;
+        m_impl->renderContext->flush(flushRes);
+    };
+    m_impl->deferred->render(artboard, QSize(w, h), fit, alignment,
+                             cmd, false, flush,
+                             [&] { flush(m_impl->renderTarget.get()); },
+                             [&] {
+                                 // Vulkan's Ore and 2D renderer share a resource
+                                 // manager. Advance one sequence for both, after
+                                 // any canvas pre-passes have flushed.
+                                 rive::ore::Context::FrameDescriptor desc{};
+                                 desc.currentFrameNumber = ++m_impl->currentFrameNumber;
+                                 desc.safeFrameNumber = m_impl->safeFrameNumber;
+                                 return desc;
+                             });
 
     // No "clear target" call: the rcp<D3D12Texture> overload of
     // setTargetTexture deref's its argument unconditionally
@@ -605,6 +619,7 @@ void RiveD3D12Backend::renderFrame(rive::ArtboardInstance* artboard,
     if (SUCCEEDED(m_impl->commandQueue->Signal(m_impl->frameFence.Get(), v)))
     {
         m_impl->frameFenceValues[slot] = v;
+        m_impl->resourceFrames[slot] = m_impl->currentFrameNumber;
     }
 
     m_impl->frameSlot = (slot + 1) % kFramesInFlight;
@@ -619,7 +634,7 @@ void RiveD3D12Backend::abandonGraphicsResources()
     // destruction walks its tracker (otherwise: "QRhi going down with N
     // unreleased resources" warning).
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->destroyFrameRing();

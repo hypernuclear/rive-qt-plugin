@@ -28,7 +28,7 @@
 #include "rive_d3d11_frame_tracker.h"
 
 #include "../rive_render_backend_helpers.h"
-#include "../../rive/rive_qt_factory.h"
+#include "../rive_deferred_renderer.h"
 
 #include <QLoggingCategory>
 #include <QPointer>
@@ -102,7 +102,7 @@ struct RiveD3D11Backend::Impl
 
     std::shared_ptr<rive::gpu::RenderContext> renderContext;
     std::shared_ptr<RiveD3D11FrameTracker> frameTracker;
-    std::unique_ptr<RiveQtFactory> factory;
+    std::unique_ptr<RiveDeferredRenderer> deferred;
     rive::rcp<rive::gpu::RenderTargetD3D> renderTarget;
 
     ComPtr<ID3D11Texture2D> targetTexture;
@@ -143,7 +143,7 @@ RiveD3D11Backend::~RiveD3D11Backend()
 {
     // Drop rive state before the device disappears. Factory borrows
     // the RenderContext so it goes first.
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->frameTracker.reset();
@@ -153,7 +153,7 @@ RiveD3D11Backend::~RiveD3D11Backend()
 
 bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
 {
-    if (m_impl->window == window && m_impl->renderContext)
+    if (m_impl->window == window && m_impl->deferred)
         return true;
 
     auto setError = [&](const QString& msg) {
@@ -240,8 +240,9 @@ bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
 
     // QImage-backed factory wrapper so embedded raster art in .riv
     // files decodes (rive_decoders is disabled in this build).
-    m_impl->factory =
-        std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+    m_impl->deferred = RiveDeferredRenderer::create(m_impl->renderContext.get(), errorOut);
+    if (!m_impl->deferred)
+        return false;
 
     qCInfo(lcRiveD3D11Backend) << "Initialized" << (opts.isIntel ? "(Intel)" : "");
     return true;
@@ -249,12 +250,12 @@ bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
 
 bool RiveD3D11Backend::isInitialized() const
 {
-    return m_impl->renderContext != nullptr;
+    return m_impl->deferred != nullptr;
 }
 
 rive::Factory* RiveD3D11Backend::factory() const
 {
-    return m_impl->factory.get();
+    return m_impl->deferred ? m_impl->deferred->factory() : nullptr;
 }
 
 QSGTexture* RiveD3D11Backend::ensureTexture(const QSize& pixelSize)
@@ -358,34 +359,19 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
     const uint32_t w = m_impl->renderTarget->width();
     const uint32_t h = m_impl->renderTarget->height();
 
-    rive::gpu::RenderContext::FrameDescriptor frameDesc;
-    frameDesc.renderTargetWidth = w;
-    frameDesc.renderTargetHeight = h;
-    frameDesc.loadAction = rive::gpu::LoadAction::clear;
-    frameDesc.clearColor = 0;
-    m_impl->renderContext->beginFrame(frameDesc);
-
-    rive::RiveRenderer renderer(m_impl->renderContext.get());
-    renderer.save();
-
-    const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
-                           static_cast<float>(h));
-    renderer.align(rive_qt::toRiveFit(fit),
-                   rive_qt::toRiveAlignment(alignment),
-                   frame, artboard->bounds());
-    artboard->draw(&renderer);
-    renderer.restore();
-
     m_impl->renderTarget->setTargetTexture(m_impl->targetTexture);
 
-    rive::gpu::RenderContext::FlushResources flushRes;
-    flushRes.renderTarget = m_impl->renderTarget.get();
-    // externalCommandBuffer left null — D3D11 issues to the immediate
-    // context, no per-frame command-buffer handoff.
-    flushRes.currentFrameNumber = m_impl->frameTracker->nextFrame();
-    flushRes.safeFrameNumber = m_impl->frameTracker->safeFrame();
-    m_impl->renderContext->flush(flushRes);
-    m_impl->frameTracker->submitted(m_impl->context.Get());
+    const auto flush = [&](rive::gpu::RenderTarget* target) {
+        rive::gpu::RenderContext::FlushResources flushRes;
+        flushRes.renderTarget = target;
+        flushRes.currentFrameNumber = m_impl->frameTracker->nextFrame();
+        flushRes.safeFrameNumber = m_impl->frameTracker->safeFrame();
+        m_impl->renderContext->flush(flushRes);
+        m_impl->frameTracker->submitted(m_impl->context.Get());
+    };
+    m_impl->deferred->render(artboard, QSize(w, h), fit, alignment,
+                             nullptr, true, flush,
+                             [&] { flush(m_impl->renderTarget.get()); });
 
     // Drop the ComPtr ref so the next ensureTexture can replace the
     // texture without RenderTargetD3D holding a stale reference.
@@ -399,7 +385,7 @@ void RiveD3D11Backend::abandonGraphicsResources()
     // ID3D11Texture2D wrapper) is released before QRhi destruction
     // walks its tracker. Otherwise Qt warns about unreleased resources.
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->frameTracker.reset();

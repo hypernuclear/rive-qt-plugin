@@ -31,7 +31,7 @@
 #include "rive_gl_backend.h"
 
 #include "../rive_render_backend_helpers.h"
-#include "../../rive/rive_qt_factory.h"
+#include "../rive_deferred_renderer.h"
 
 #include <QLoggingCategory>
 #include <QOpenGLContext>
@@ -61,11 +61,17 @@
 // Complete rive::gpu::Texture before the impl header: MSVC instantiates
 // rcp<Texture>::~rcp at RenderContextImpl::platformDecodeImageTexture's
 // by-value return declaration and needs the full type (Clang doesn't).
+// Qt's Linux GL headers define GLAPI without extern. Rive's GLAD manual
+// extension declarations would become duplicate definitions at link time.
+#pragma push_macro("GLAPI")
+#undef GLAPI
+#define GLAPI extern
 #include <rive/renderer/texture.hpp>
 #include <rive/renderer/gl/render_context_gl_impl.hpp>
 #include <rive/renderer/gl/render_target_gl.hpp>
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>
+#pragma pop_macro("GLAPI")
 #if defined(_MSC_VER)
 #pragma warning(pop)
 #endif
@@ -122,7 +128,7 @@ struct RiveGLBackend::Impl
     QOpenGLContext* glContext = nullptr;
 
     std::unique_ptr<rive::gpu::RenderContext> renderContext;
-    std::unique_ptr<RiveQtFactory> factory;
+    std::unique_ptr<RiveDeferredRenderer> deferred;
     rive::rcp<rive::gpu::TextureRenderTargetGL> renderTarget;
 
     GLuint targetTextureId = 0;
@@ -172,7 +178,7 @@ RiveGLBackend::RiveGLBackend() : m_impl(std::make_unique<Impl>()) {}
 
 RiveGLBackend::~RiveGLBackend()
 {
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->scheduleTextureCleanup(/*sync=*/true);
@@ -180,7 +186,7 @@ RiveGLBackend::~RiveGLBackend()
 
 bool RiveGLBackend::initialize(QQuickWindow* window, QString* errorOut)
 {
-    if (m_impl->window == window && m_impl->renderContext)
+    if (m_impl->window == window && m_impl->deferred)
         return true;
 
     auto setError = [&](const QString& msg) {
@@ -253,8 +259,9 @@ bool RiveGLBackend::initialize(QQuickWindow* window, QString* errorOut)
         return false;
     }
 
-    m_impl->factory =
-        std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+    m_impl->deferred = RiveDeferredRenderer::create(m_impl->renderContext.get(), errorOut);
+    if (!m_impl->deferred)
+        return false;
 
     qCInfo(lcRiveGLBackend) << "Initialized on" << reinterpret_cast<const char*>(
         glGetString(GL_RENDERER));
@@ -263,12 +270,12 @@ bool RiveGLBackend::initialize(QQuickWindow* window, QString* errorOut)
 
 bool RiveGLBackend::isInitialized() const
 {
-    return m_impl->renderContext != nullptr;
+    return m_impl->deferred != nullptr;
 }
 
 rive::Factory* RiveGLBackend::factory() const
 {
-    return m_impl->factory.get();
+    return m_impl->deferred ? m_impl->deferred->factory() : nullptr;
 }
 
 QSGTexture* RiveGLBackend::ensureTexture(const QSize& pixelSize)
@@ -373,34 +380,18 @@ void RiveGLBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit,
     const uint32_t w = m_impl->renderTarget->width();
     const uint32_t h = m_impl->renderTarget->height();
 
-    rive::gpu::RenderContext::FrameDescriptor frameDesc;
-    frameDesc.renderTargetWidth = w;
-    frameDesc.renderTargetHeight = h;
-    frameDesc.loadAction = rive::gpu::LoadAction::clear;
-    frameDesc.clearColor = 0;
-    m_impl->renderContext->beginFrame(frameDesc);
-
-    rive::RiveRenderer renderer(m_impl->renderContext.get());
-    renderer.save();
-
-    const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
-                           static_cast<float>(h));
-    renderer.align(rive_qt::toRiveFit(fit),
-                   rive_qt::toRiveAlignment(alignment),
-                   frame, artboard->bounds());
-    artboard->draw(&renderer);
-    renderer.restore();
-
     m_impl->renderTarget->setTargetTexture(m_impl->targetTextureId);
 
-    m_impl->currentFrameNumber += 1;
-    rive::gpu::RenderContext::FlushResources flushRes;
-    flushRes.renderTarget = m_impl->renderTarget.get();
-    // externalCommandBuffer left null — GL is immediate-mode.
-    flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-    flushRes.safeFrameNumber =
-        m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
-    m_impl->renderContext->flush(flushRes);
+    const auto flush = [&](rive::gpu::RenderTarget* target) {
+        rive::gpu::RenderContext::FlushResources flushRes;
+        flushRes.renderTarget = target;
+        flushRes.currentFrameNumber = ++m_impl->currentFrameNumber;
+        flushRes.safeFrameNumber = m_impl->currentFrameNumber - 1;
+        m_impl->renderContext->flush(flushRes);
+    };
+    m_impl->deferred->render(artboard, QSize(w, h), fit, alignment,
+                             nullptr, false, flush,
+                             [&] { flush(m_impl->renderTarget.get()); });
 
     // Yield GL state cleanly — unbind Rive's VAOs/programs/FBOs so
     // Qt's RHI doesn't see them when it takes the context back.
@@ -415,7 +406,7 @@ void RiveGLBackend::abandonGraphicsResources()
     // tracker. Skipping this leaks the QRhiTexture and trips Qt's
     // "QRhi going down with N unreleased resources" warning.
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->glContext = nullptr;
