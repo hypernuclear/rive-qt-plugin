@@ -1,0 +1,52 @@
+{
+    "runtime": "runtime-v0.1.399",
+    "samples": [
+        {
+            "id": "grid-stack",
+            "file": "upgrade-grid-stack.riv",
+            "title": "Grid and stack layouts",
+            "instructions": "Use the Artboard picker to compare GridWithLayouts, StackWithLayouts, and the SizeChanging / Span variants. Cells should stay aligned as tracks and spans animate. GridWithLayoutParticipants includes shapes directly in the layout.",
+            "upstream": "tests/unit_tests/assets/layout_grid_stack.riv"
+        },
+        {
+            "id": "fitted-text",
+            "file": "upgrade-fitted-text.riv",
+            "title": "Fitted text and hug sizing (7.4)",
+            "viewModel": "MainVM",
+            "instance": "Instance",
+            "instructions": "The bar below the title should sit close to the fitted text, without the old oversized gap. In the Layout tab, enable the size override and vary Width to inspect the title's fit and the surrounding layout.",
+            "upstream": "tests/unit_tests/assets/fit_font_size_hug_test.riv"
+        },
+        {
+            "id": "global-scripting",
+            "file": "upgrade-global-scripting.riv",
+            "title": "Global view models in scripts",
+            "instructions": "Keep Auto-bind VM on. Parent should show 'Initial value' and the list 'Sizes', 'Colors', 'Wrong' (an authored test label). Compare Main and GlobalName in the Artboard picker. The scripts read shared labels, colors, and font sizes; global VM editing is not exposed in the property panel yet. Requires scripting and Rive tools enabled.",
+            "requiresScripting": true,
+            "upstream": "tests/unit_tests/assets/global_view_models_scripting_test.riv"
+        },
+        {
+            "id": "scripted-clipping",
+            "file": "upgrade-scripted-clipping.riv",
+            "title": "Animated scripted clipping",
+            "instructions": "Leave playback running. The clip boundary should continue following the animated path effect, without freezing after the first frame or leaking outside the path. Requires scripting and Rive tools enabled.",
+            "requiresScripting": true,
+            "checkAnimation": true,
+            "upstream": "tests/unit_tests/assets/scripted_path_effect_clip.riv"
+        },
+        {
+            "id": "image-fit",
+            "file": "upgrade-image-fit.riv",
+            "title": "Image fit, alignment, and scale",
+            "instructions": "The embedded image should be visible as fit and alignment animate. Check that the image's authored scale is preserved. Use the imageProperty control in the View Model tab to try a replacement image.",
+            "upstream": "tests/unit_tests/assets/image_fit_alignment_updated_test.riv"
+        },
+        {
+            "id": "artboard-transforms",
+            "file": "upgrade-artboard-transforms.riv",
+            "title": "Artboard transforms and pointer input",
+            "instructions": "On Main, click the transformed shape repeatedly to exercise the state machine. In the View Model tab, change rotation, xPos, or yPos and fire triggerProperty. The artwork and clickable area should move together.",
+            "upstream": "tests/unit_tests/assets/artboard_opacity_and_transform_test.riv"
+        }
+    ]
+}

@@ -29,7 +29,7 @@ ApplicationWindow {
     width: 1280
     height: 820
     visible: true
-    title: qsTr("Rive viewer")
+    title: qsTr("Rive viewer") + " · " + viewerRuntimeVersion
     color: "#141414"
 
     // Demonstrates the qt_add_rive_assets() codegen output: at startup
@@ -70,6 +70,26 @@ ApplicationWindow {
         nameFilters: ["*.riv"]
         showDirs: false
         sortField: FolderListModel.Name
+    }
+
+    readonly property int upgradeSampleIndex: viewerUpgradeSamples.findIndex(
+        sample => rive.source.toString().endsWith("/" + sample.file))
+    readonly property var upgradeSample: upgradeSampleIndex >= 0
+        ? viewerUpgradeSamples[upgradeSampleIndex] : null
+    property string loadError: ""
+
+    function loadUpgradeSample(index) {
+        if (index < 0 || index >= viewerUpgradeSamples.length)
+            return
+        const file = viewerUpgradeSamples[index].file
+        for (let i = 0; i < samplesModel.count; ++i) {
+            if (samplesModel.get(i, "fileName") === file) {
+                sampleSelector.currentIndex = i
+                reloadSampleFromPath(samplesModel.get(i, "filePath"))
+                return
+            }
+        }
+        loadError = qsTr("Missing update sample: ") + file
     }
 
     // Local path → file URL. Windows local paths start with a drive
@@ -120,8 +140,21 @@ ApplicationWindow {
 
     function reloadSampleFromPath(filePath) {
         const url = localPathToFileUrl(filePath)
+        loadError = ""
         urlField.text = ""
         resetRiveSelectors()
+        const preset = viewerUpgradeSamples.find(sample => filePath.endsWith("/" + sample.file))
+        if (preset) {
+            rive.autoBindViewModel = true
+            rive.playing = true
+            rive.speed = 1
+            rive.fit = RiveView.Fit.Contain
+            layoutOverrideEnable.checked = false
+            rive.layoutSize = Qt.size(-1, -1)
+            rive.viewModelName = preset.viewModel || ""
+            rive.viewModelInstanceName = preset.instance || ""
+            viewModelInstanceSelector.editText = preset.instance || qsTr("(blank)")
+        }
         // Clear first, then set on the next event-loop turn. Assigning both
         // in one handler leaves m_loadedUrl === m_source on the render
         // thread, so tryLoad() never re-reads the file or drops the cache.
@@ -170,6 +203,31 @@ ApplicationWindow {
         anchors.margins: 16
         spacing: 12
 
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            Label { text: qsTr("Update checks:"); color: "#ddd" }
+            ComboBox {
+                id: upgradeSampleSelector
+                objectName: "upgradeSampleSelector"
+                Layout.fillWidth: true
+                model: [qsTr("Choose a runtime check")].concat(
+                    viewerUpgradeSamples.map(sample => sample.title))
+                currentIndex: window.upgradeSampleIndex + 1
+                onActivated: index => window.loadUpgradeSample(index - 1)
+            }
+            Label { text: viewerRuntimeVersion; color: "#888" }
+        }
+
+        Label {
+            objectName: "upgradeSampleInstructions"
+            Layout.fillWidth: true
+            visible: window.upgradeSample !== null
+            text: window.upgradeSample ? window.upgradeSample.instructions : ""
+            color: "#b8c8dc"
+            wrapMode: Text.WordWrap
+        }
+
         // ----- Top toolbar: source / artboard / SM / VM selectors --------
 
         GridLayout {
@@ -217,6 +275,7 @@ ApplicationWindow {
                 text: qsTr("Load")
                 enabled: urlField.text.length > 0
                 onClicked: {
+                    window.loadError = ""
                     rive.source = Qt.url(urlField.text)
                     artboardSelector.currentIndex = 0
                     stateMachineSelector.currentIndex = 0
@@ -352,7 +411,11 @@ ApplicationWindow {
                     focus: true
 
                     onLoadFailed: reason => {
-                        status.text = qsTr("Failed: ") + reason
+                        window.loadError = qsTr("Failed: ") + reason
+                    }
+                    onViewModelNamesChanged: {
+                        viewModelSelector.currentIndex = Math.max(
+                            0, rive.viewModelNames.indexOf(rive.viewModelName) + 1)
                     }
                 }
             }
@@ -622,8 +685,8 @@ ApplicationWindow {
         Label {
             id: status
             Layout.fillWidth: true
-            text: rive.source.toString().split("/").pop() || qsTr("(no source)")
-            color: "#888"
+            text: window.loadError || rive.source.toString().split("/").pop() || qsTr("(no source)")
+            color: window.loadError ? "#ff8a8a" : "#888"
             elide: Text.ElideRight
         }
     }
@@ -1060,6 +1123,7 @@ ApplicationWindow {
                 // through to the first sample if none of the preferred
                 // ones are present.
                 const preferred = [
+                    "upgrade-grid-stack.riv",
                     "data_binding_test.riv",
                     "quick_start_health_bar.riv",
                     "db_list_test.riv",
@@ -1072,8 +1136,7 @@ ApplicationWindow {
                     if (idx >= 0) { pickedIdx = idx; break; }
                 }
                 sampleSelector.currentIndex = pickedIdx;
-                rive.source = localPathToFileUrl(
-                    samplesModel.get(pickedIdx, "filePath"));
+                reloadSampleFromPath(samplesModel.get(pickedIdx, "filePath"));
             }
         }
         function onStatusChanged() {

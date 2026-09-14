@@ -87,6 +87,7 @@ add_subdirectory(artboard)
 add_subdirectory(state_machine)
 add_subdirectory(view_model)
 add_subdirectory(asset_loader)
+add_subdirectory(upgrade)
 
 # Render smoke is Metal/macOS-only today (the only backend built on Apple).
 if(APPLE AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/render/CMakeLists.txt")

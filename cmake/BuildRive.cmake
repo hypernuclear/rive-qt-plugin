@@ -17,12 +17,9 @@
 #     --with_rive_layout`.
 #   - On Apple and Windows the `rive_pls_renderer` GPU lib is also
 #     built so the plugin can render zero-copy via Metal (Apple) or
-#     D3D11 (Windows). Image decoding inside .riv files is currently
-#     disabled on both via `--no-rive-decoders`: rive_decoders pulls
-#     libpng/libjpeg/libwebp from GitHub, which is more dependency
-#     surface than we want for v1. The QPainter path used to decode
-#     via QImage; the GPU paths will need a follow-up QImage-backed
-#     factory wrapper to restore that behaviour.
+#     D3D11 (Windows). `--no-rive-decoders` skips Rive's bundled image
+#     codecs; RiveQtFactory decodes through QImage and uploads pixels
+#     through the GPU context instead.
 #
 # Consumer usage:
 #   target_link_libraries(<target> PRIVATE rive)
@@ -89,8 +86,8 @@ else()
 endif()
 
 # Scripting opt-in. When ON, pass --with_rive_scripting to premake.
-# Triggers download of luigi-rosso/luau (rive_0_33) + libhydrogen
-# (rive_0_1), turns luau_vm into a real static lib (rather than a
+# Triggers download of luigi-rosso/luau (rive_0_734) + libhydrogen
+# (rive_0_2), turns luau_vm into a real static lib (rather than a
 # dummy stub), and adds WITH_RIVE_SCRIPTING + libhydrogen.c to the rive
 # core lib's compile. Without this flag, scripted listeners and
 # transitions in .riv files silently no-op.
@@ -718,6 +715,9 @@ add_custom_target(rive_external DEPENDS ${RIVE_ALL_LIBS})
 # Public-facing target. INTERFACE because we don't own any compiled sources
 # for it — we just stitch together the upstream-built libs + headers.
 add_library(rive INTERFACE)
+# build_rive.sh enables these by default. Keep consumers' class layouts
+# and virtual method tables consistent with the upstream libraries.
+target_compile_definitions(rive INTERFACE WITH_RIVE_TEXT WITH_RIVE_LAYOUT RIVE_CANVAS)
 add_dependencies(rive rive_external)
 target_link_libraries(rive INTERFACE ${RIVE_ALL_LIBS})
 
@@ -766,7 +766,7 @@ endif()
 # (RiveFile, RiveStateMachine wrappers) need to see the same gate the
 # runtime was compiled with so member offsets and ABI match.
 if(RIVE_QT_WITH_SCRIPTING)
-    target_compile_definitions(rive INTERFACE WITH_RIVE_SCRIPTING)
+    target_compile_definitions(rive INTERFACE WITH_RIVE_SCRIPTING WITH_RIVE_SCRIPTING_LUAU)
 endif()
 
 # Tools mode: same ABI-match concern. Runtime compiles a different

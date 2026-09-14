@@ -32,6 +32,10 @@ cmake --build --preset viewer
 
 First configure will spend 30–60s bootstrapping `premake5` and building rive-runtime. Subsequent builds are fast.
 
+The viewer's **Update checks** picker includes six samples for the current
+runtime update, with instructions for visual inspection. See the
+[sample guide](examples/viewer/samples/README.md) for coverage and automated checks.
+
 ## Use in your own Qt project
 
 Add as a submodule:
@@ -106,7 +110,7 @@ RiveView {
 | `RiveRenderBackend`        | Per-RHI backend interface; one impl per `src/backends/<api>/` (Metal, D3D11, D3D12, GL, Vulkan). Owns the graphics-device interop and paints the artboard into a `QSGTexture`. |
 | `RiveStateMachine` / `RiveViewModelInstance` | QObject wrappers exposing the state machine and data-bound view model to QML. |
 | `cmake/BuildRive.cmake`    | Invokes upstream's premake/gmake2/msbuild build and imports `librive.a`.   |
-| `third_party/rive-runtime` | Upstream submodule, pinned to `runtime-v0.1.5`.                            |
+| `third_party/rive-runtime` | Upstream submodule, pinned to `runtime-v0.1.399` (`1cdd96e32f8a`).          |
 
 ### Why Rive's GPU renderer
 

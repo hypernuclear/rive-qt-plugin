@@ -102,3 +102,13 @@ rive::rcp<rive::RenderImage> RiveQtFactory::decodeImage(rive::Span<const uint8_t
         return nullptr;
     return rive::make_rcp<rive::RiveRenderImage>(std::move(texture));
 }
+
+rive::Factory* RiveQtFactory::renderContext()
+{
+    return m_context;
+}
+
+rive::ore::Context* RiveQtFactory::ore()
+{
+    return m_context->ore();
+}

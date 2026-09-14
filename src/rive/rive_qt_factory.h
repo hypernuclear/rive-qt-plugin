@@ -29,6 +29,10 @@ public:
     explicit RiveQtFactory(rive::gpu::RenderContext* context);
     ~RiveQtFactory() override = default;
 
+    // Imports route GPU scripts through the factory that decoded the file.
+    rive::Factory* renderContext() override;
+    rive::ore::Context* ore() override;
+
     // Forwarded to the wrapped RenderContext.
     rive::rcp<rive::RenderBuffer> makeRenderBuffer(rive::RenderBufferType,
                                                    rive::RenderBufferFlags,
