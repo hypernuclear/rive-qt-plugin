@@ -21,11 +21,38 @@ signed-production-script validation. Global view models work inside the
 file/scripts; the Qt API does not yet expose explicit global VM editing.
 
 These samples exercise regular Luau scripting, not custom GPU canvas/shader
-scripts. A new editor export using `gpuCanvas` and an embedded shader would
-be useful for end-to-end coverage of the factory's GPU routing hooks.
-Cache-as-bitmap is also outside this check set: upstream requires a canvas
-host/deferred rendering integration that our immediate renderer does not
-currently provide.
+scripts. GPU canvas still needs renderer integration: the new factory hooks
+route scripts to the GPU device, but `GPUCanvas:beginRenderPass()` requires
+a deferred recorder. Our backends currently draw directly. A `.riv` export
+alone therefore does not complete GPU canvas support. Cache-as-bitmap also
+requires the canvas host/deferred rendering integration.
+
+## GPU canvas validation plan
+
+These steps are pending; the six checks above do not establish GPU canvas support.
+
+1. Integrate Rive's `DeferredSession` and `DeferredInlineHost` with the Qt
+   backend, starting with Metal. Imports must route to the recording Ore
+   context and canvas host, and recorded work must replay into Qt's render
+   target in the right order. The inline host can replay on the existing
+   render thread; a separate worker is not required.
+2. Add a native pixel test based on upstream
+   `tests/gm/ore_render_deferred_canvas.cpp`: clear a 200×200 GPU canvas to
+   a known color, composite its image into the Qt target, and read back the
+   expected pixels. This can be authored without an editor export.
+3. Add an exported `.riv` that uses `context:gpuCanvas()` and an animated
+   shader, with scripts, shaders, and any textures embedded. A moving gradient
+   or rotating triangle is enough. Include ordinary Rive shapes in front of
+   and behind the canvas plus a transparent region to inspect compositing.
+   Capture a short editor preview as a visual reference.
+4. Add it to the viewer catalog and GPU tests. Verify visible shader output,
+   changing frames, pause/resume, layout-driven canvas resizing, transparency,
+   repeated reloads, and closing/reopening windows. Capture script errors as
+   failures: ordinary 2D artwork can render even if the GPU canvas failed.
+   Repeat on D3D11 before claiming Windows support.
+
+Once the integration is present, put the exported file in this directory and
+click **Refresh** to try it in the viewer.
 
 ## Automated checks
 
