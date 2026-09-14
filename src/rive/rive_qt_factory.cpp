@@ -9,14 +9,16 @@
 #include <rive/renderer/rive_render_image.hpp>
 #include <rive/renderer/texture.hpp>
 
-RiveQtFactory::RiveQtFactory(rive::gpu::RenderContext* context) : m_context(context)
+RiveQtFactory::RiveQtFactory(rive::gpu::RenderContext* context,
+                           rive::Factory* recordingFactory) :
+    m_context(context), m_resourceFactory(recordingFactory ? recordingFactory : context)
 {}
 
 rive::rcp<rive::RenderBuffer> RiveQtFactory::makeRenderBuffer(rive::RenderBufferType type,
                                                               rive::RenderBufferFlags flags,
                                                               size_t sizeInBytes)
 {
-    return m_context->makeRenderBuffer(type, flags, sizeInBytes);
+    return m_resourceFactory->makeRenderBuffer(type, flags, sizeInBytes);
 }
 
 rive::rcp<rive::RenderShader> RiveQtFactory::makeLinearGradient(float sx, float sy,
@@ -25,7 +27,7 @@ rive::rcp<rive::RenderShader> RiveQtFactory::makeLinearGradient(float sx, float 
                                                                 const float stops[],
                                                                 size_t count)
 {
-    return m_context->makeLinearGradient(sx, sy, ex, ey, colors, stops, count);
+    return m_resourceFactory->makeLinearGradient(sx, sy, ex, ey, colors, stops, count);
 }
 
 rive::rcp<rive::RenderShader> RiveQtFactory::makeRadialGradient(float cx, float cy,
@@ -34,23 +36,23 @@ rive::rcp<rive::RenderShader> RiveQtFactory::makeRadialGradient(float cx, float 
                                                                 const float stops[],
                                                                 size_t count)
 {
-    return m_context->makeRadialGradient(cx, cy, radius, colors, stops, count);
+    return m_resourceFactory->makeRadialGradient(cx, cy, radius, colors, stops, count);
 }
 
 rive::rcp<rive::RenderPath> RiveQtFactory::makeRenderPath(rive::RawPath& path,
                                                           rive::FillRule fillRule)
 {
-    return m_context->makeRenderPath(path, fillRule);
+    return m_resourceFactory->makeRenderPath(path, fillRule);
 }
 
 rive::rcp<rive::RenderPath> RiveQtFactory::makeEmptyRenderPath()
 {
-    return m_context->makeEmptyRenderPath();
+    return m_resourceFactory->makeEmptyRenderPath();
 }
 
 rive::rcp<rive::RenderPaint> RiveQtFactory::makeRenderPaint()
 {
-    return m_context->makeRenderPaint();
+    return m_resourceFactory->makeRenderPaint();
 }
 
 rive::rcp<rive::RenderImage> RiveQtFactory::decodeImage(rive::Span<const uint8_t> bytes)
@@ -110,5 +112,10 @@ rive::Factory* RiveQtFactory::renderContext()
 
 rive::ore::Context* RiveQtFactory::ore()
 {
-    return m_context->ore();
+    return m_resourceFactory->ore();
+}
+
+rive::cmd::DeferredCanvasHost* RiveQtFactory::deferredCanvasHost()
+{
+    return m_resourceFactory->deferredCanvasHost();
 }

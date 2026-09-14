@@ -39,6 +39,13 @@
 #include <rive/renderer/metal/render_context_metal_impl.h>
 #include <rive/renderer/render_context.hpp>
 #include <rive/renderer/rive_renderer.hpp>
+// Rive's census helper uses "slots" as a variable name.
+#pragma push_macro("slots")
+#undef slots
+#include <rive/renderer/cmd/deferred_host.hpp>
+#pragma pop_macro("slots")
+
+#include <atomic>
 
 #include "../rive_render_backend_helpers.h"
 
@@ -59,6 +66,41 @@ private:
     QSGTexture* m_qsg = nullptr;
 };
 
+// Replay canvas passes and the final 2D draw on Qt's Metal queue. Rive owns
+// recording/replay order; this sink supplies the screen target and command
+// buffer used by both Ore (scripted GPU work) and the screen flush.
+class MetalFrameSink final : public rive::cmd::HostFrameSink
+{
+public:
+    MetalFrameSink(rive::gpu::RenderContext* context, rive::Factory* factory,
+                   const QSize& size, id<MTLCommandBuffer> buffer, bool replayOre) :
+        HostFrameSink(true, 0, 0, replayOre), m_context(context),
+        m_factory(factory), m_size(size), m_buffer(buffer), m_renderer(context)
+    {}
+
+    rive::Factory* factory() override { return m_factory; }
+    rive::gpu::RenderContext* renderContext() override { return m_context; }
+    void* oreCommandBuffer() override { return (__bridge void*)m_buffer; }
+    rive::Renderer* beginScreen(uint64_t, bool clear, uint32_t color) override
+    {
+        rive::gpu::RenderContext::FrameDescriptor desc;
+        desc.renderTargetWidth = m_size.width();
+        desc.renderTargetHeight = m_size.height();
+        desc.loadAction = clear ? rive::gpu::LoadAction::clear
+                                : rive::gpu::LoadAction::preserveRenderTarget;
+        desc.clearColor = color;
+        m_context->beginFrame(desc);
+        return &m_renderer;
+    }
+
+private:
+    rive::gpu::RenderContext* m_context;
+    rive::Factory* m_factory;
+    QSize m_size;
+    id<MTLCommandBuffer> m_buffer;
+    rive::RiveRenderer m_renderer;
+};
+
 } // namespace
 
 struct RiveMetalBackend::Impl
@@ -69,6 +111,9 @@ struct RiveMetalBackend::Impl
     id<MTLCommandQueue> queue = nil;
 
     std::unique_ptr<rive::gpu::RenderContext> renderContext;
+    std::unique_ptr<rive::cmd::DeferredSession> session;
+    std::unique_ptr<rive::cmd::DeferredInlineHost> host;
+    std::unique_ptr<RiveQtFactory> replayFactory;
     std::unique_ptr<RiveQtFactory> factory;
     rive::rcp<rive::gpu::RenderTargetMetal> renderTarget;
 
@@ -78,6 +123,24 @@ struct RiveMetalBackend::Impl
     QSize textureSize;
 
     uint64_t currentFrameNumber = 0;
+    std::shared_ptr<std::atomic<uint64_t>> completedFrame =
+        std::make_shared<std::atomic<uint64_t>>(0);
+    id<MTLCommandBuffer> lastCommandBuffer = nil;
+
+    void releaseRenderingState()
+    {
+        // A completion can arrive after the QObject/window disappears; its
+        // counter is independently owned. Drain before releasing replay's
+        // resident resources and their context, only on teardown.
+        [lastCommandBuffer waitUntilCompleted];
+        lastCommandBuffer = nil;
+        factory.reset();
+        replayFactory.reset();
+        host.reset();
+        session.reset();
+        renderTarget = nullptr;
+        renderContext.reset();
+    }
 
     // sync=true for shutdown paths (~RiveMetalBackend,
     // abandonGraphicsResources): delete inline. AfterSwapStage won't
@@ -112,9 +175,7 @@ RiveMetalBackend::~RiveMetalBackend()
 {
     // Drop rive state before the device disappears. Factory borrows
     // the RenderContext so it goes first.
-    m_impl->factory.reset();
-    m_impl->renderTarget = nullptr;
-    m_impl->renderContext.reset();
+    m_impl->releaseRenderingState();
 
     m_impl->scheduleTextureCleanup(/*sync=*/true);
 }
@@ -176,9 +237,25 @@ bool RiveMetalBackend::initialize(QQuickWindow* window, QString* errorOut)
         return false;
     }
 
-    // QImage-backed factory wrapper so embedded raster art in .riv
-    // files decodes (rive_decoders is disabled in this build).
-    m_impl->factory = std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+    auto* context = m_impl->renderContext.get();
+    context->static_impl_cast<rive::gpu::RenderContextMetalImpl>()->setCommandQueue(m_impl->queue);
+    auto* ore = context->ore();
+    if (!ore)
+    {
+        setError(QStringLiteral("RiveMetalBackend: GPU canvas context unavailable"));
+        m_impl->releaseRenderingState();
+        return false;
+    }
+    m_impl->session = std::make_unique<rive::cmd::DeferredSession>(
+        rive::ore::ReplayCaps::from(*ore));
+    m_impl->session->bindRenderContext(context);
+    m_impl->host = std::make_unique<rive::cmd::DeferredInlineHost>();
+    m_impl->host->bindSession(m_impl->session.get());
+    // Paths, paints, buffers and GPU script calls record through the same
+    // session. QImage uploads remain on the real device; the session retains
+    // those images through its foreign-image registry for replay.
+    m_impl->replayFactory = std::make_unique<RiveQtFactory>(context);
+    m_impl->factory = std::make_unique<RiveQtFactory>(context, m_impl->session.get());
 
     qCInfo(lcRiveMetalBackend) << "Initialized on device" << m_impl->device.name.UTF8String;
     return true;
@@ -282,36 +359,43 @@ void RiveMetalBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit
         const uint32_t w = m_impl->renderTarget->width();
         const uint32_t h = m_impl->renderTarget->height();
 
-        rive::gpu::RenderContext::FrameDescriptor frameDesc;
-        frameDesc.renderTargetWidth = w;
-        frameDesc.renderTargetHeight = h;
-        frameDesc.loadAction = rive::gpu::LoadAction::clear;
-        frameDesc.clearColor = 0;
-        m_impl->renderContext->beginFrame(frameDesc);
-
-        rive::RiveRenderer renderer(m_impl->renderContext.get());
-        renderer.save();
+        // Import and advance may already have recorded script work. Keep it
+        // until this frame has replayed, including one-shot resource creates.
+        m_impl->host->beginRecord(true, 0);
+        auto* renderer = m_impl->host->screenRenderer();
+        renderer->save();
 
         const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
                                static_cast<float>(h));
-        renderer.align(rive_qt::toRiveFit(fit),
+        renderer->align(rive_qt::toRiveFit(fit),
                        rive_qt::toRiveAlignment(alignment),
                        frame, artboard->bounds());
-        artboard->draw(&renderer);
-        renderer.restore();
+        artboard->draw(renderer);
+        renderer->restore();
 
         m_impl->renderTarget->setTargetTexture(m_impl->targetTexture);
 
         id<MTLCommandBuffer> cb = [m_impl->queue commandBuffer];
-        m_impl->currentFrameNumber += 1;
-        rive::gpu::RenderContext::FlushResources flushRes;
-        flushRes.renderTarget = m_impl->renderTarget.get();
-        flushRes.externalCommandBuffer = (__bridge void*) cb;
-        flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-        flushRes.safeFrameNumber =
-            m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
-        m_impl->renderContext->flush(flushRes);
-        [cb commit];
+        MetalFrameSink sink(m_impl->renderContext.get(), m_impl->replayFactory.get(),
+                            QSize(w, h), cb, m_impl->host->replayOre());
+        m_impl->host->replayInline(sink, [&] {
+            const uint64_t frameNumber = ++m_impl->currentFrameNumber;
+            rive::gpu::RenderContext::FlushResources flushRes;
+            flushRes.renderTarget = m_impl->renderTarget.get();
+            flushRes.externalCommandBuffer = (__bridge void*)cb;
+            flushRes.currentFrameNumber = frameNumber;
+            flushRes.safeFrameNumber = m_impl->completedFrame->load(std::memory_order_acquire);
+            m_impl->renderContext->flush(flushRes);
+            auto completedFrame = m_impl->completedFrame;
+            [cb addCompletedHandler:^(id<MTLCommandBuffer>) {
+                uint64_t previous = completedFrame->load(std::memory_order_relaxed);
+                while (previous < frameNumber
+                       && !completedFrame->compare_exchange_weak(previous, frameNumber,
+                           std::memory_order_release, std::memory_order_relaxed)) {}
+            }];
+            m_impl->lastCommandBuffer = cb;
+            [cb commit];
+        });
 
         m_impl->renderTarget->setTargetTexture(nil);
     }
@@ -324,13 +408,10 @@ void RiveMetalBackend::abandonGraphicsResources()
     // MTLTexture wrapper) is released before QRhi destruction walks
     // its tracker. Skipping this leaks the QRhiTexture and trips Qt's
     // "QRhi going down with N unreleased resources" warning.
+    m_impl->releaseRenderingState();
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
-    m_impl->renderTarget = nullptr;
-    m_impl->renderContext.reset();
     m_impl->device = nil;
     m_impl->queue = nil;
     m_impl->rhi = nullptr;
     m_impl->window = nullptr;
 }
-

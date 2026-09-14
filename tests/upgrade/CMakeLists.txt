@@ -23,15 +23,19 @@ string(JSON _count LENGTH "${_json}" samples)
 math(EXPR _last "${_count} - 1")
 foreach(_index RANGE 0 ${_last})
     string(JSON _id GET "${_json}" samples ${_index} id)
-    add_test(NAME UpgradeSamples.import.${_id}
-        COMMAND tst_runtime_upgrade importsAndAdvances:${_id})
-    set_tests_properties(UpgradeSamples.import.${_id} PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen" LABELS "runtime-upgrade")
+    string(JSON _requires_gpu ERROR_VARIABLE _missing GET "${_json}" samples ${_index} requiresGpu)
+    if(NOT _requires_gpu)
+        add_test(NAME UpgradeSamples.import.${_id}
+            COMMAND tst_runtime_upgrade importsAndAdvances:${_id})
+        set_tests_properties(UpgradeSamples.import.${_id} PROPERTIES
+            ENVIRONMENT "QT_QPA_PLATFORM=offscreen" LABELS "runtime-upgrade")
+    endif()
     if(APPLE AND Qt6_VERSION VERSION_GREATER_EQUAL 6.6)
         add_test(NAME UpgradeSamples.render.${_id}
             COMMAND tst_runtime_upgrade rendersSample:${_id})
         set_tests_properties(UpgradeSamples.render.${_id} PROPERTIES
-            LABELS "runtime-upgrade;gpu" TIMEOUT 30)
+            LABELS "runtime-upgrade;gpu" TIMEOUT 30
+            FAIL_REGULAR_EXPRESSION "requires the deferred recorder;rive deferred:.*([Dd][Rr][Oo][Pp]|TRIPWIRE)")
     endif()
 endforeach()
 

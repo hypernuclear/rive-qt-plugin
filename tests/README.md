@@ -22,7 +22,7 @@ ctest --test-dir build --output-on-failure
 | `unit/` | Pure helpers (`rive_key_map`) | no |
 | `file/` `artboard/` `state_machine/` `view_model/` `asset_loader/` | Wrapper contract against fixtures via `rive::NoOpFactory` — load, enumerate, instance, advance, data-binding, triggers, text, focus mapping | no |
 | `render/` | Offscreen Metal smoke: `decodeImage`→`makeImageTexture` on a real GPU factory, plus a non-blank `RiveView` frame grab (APPLE only) | yes |
-| `upgrade/` | Viewer update fixtures: import/bind/advance every artboard, assert 7.4 fitted-text sizing and global scripting, and render each sample on Metal with a scripted-animation check | Metal cases only |
+| `upgrade/` | Viewer update fixtures: import/bind/advance artboards, assert 7.4 fitted-text sizing and global scripting, render samples on Metal, and check the GPU triangle's colors/orientation through resize, reload, and window recreation | Metal cases only |
 
 The headless layers run anywhere (offscreen QPA, no display). The `render/`
 layer is macOS/Metal-only and `QSKIP`s when no offscreen GPU context is

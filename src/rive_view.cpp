@@ -484,10 +484,6 @@ void RiveView::onBeforeSynchronizing()
 
 void RiveView::onSceneGraphInvalidated()
 {
-    if (m_backend)
-        m_backend->abandonGraphicsResources();
-    m_backend.reset();
-    m_backendReady = false;
     // Domain state that was loaded against the torn-down factory is
     // no longer valid — drop and re-create on the next paint. SM goes
     // with the artboard (Qt parent chain).
@@ -505,6 +501,12 @@ void RiveView::onSceneGraphInvalidated()
     }
     m_artboard.reset();
     m_file.reset();
+    // Script disposal and recorded resource releases still need the import
+    // factory/session. Destroy domain state before tearing down the backend.
+    if (m_backend)
+        m_backend->abandonGraphicsResources();
+    m_backend.reset();
+    m_backendReady = false;
     m_loadedUrl.clear();
     m_loadedArtboardName.clear();
     m_loadedStateMachineName.clear();

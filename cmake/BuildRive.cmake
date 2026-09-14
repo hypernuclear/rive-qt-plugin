@@ -717,7 +717,7 @@ add_custom_target(rive_external DEPENDS ${RIVE_ALL_LIBS})
 add_library(rive INTERFACE)
 # build_rive.sh enables these by default. Keep consumers' class layouts
 # and virtual method tables consistent with the upstream libraries.
-target_compile_definitions(rive INTERFACE WITH_RIVE_TEXT WITH_RIVE_LAYOUT RIVE_CANVAS)
+target_compile_definitions(rive INTERFACE WITH_RIVE_TEXT WITH_RIVE_LAYOUT RIVE_CANVAS RIVE_ORE)
 add_dependencies(rive rive_external)
 target_link_libraries(rive INTERFACE ${RIVE_ALL_LIBS})
 

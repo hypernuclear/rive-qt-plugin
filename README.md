@@ -32,7 +32,7 @@ cmake --build --preset viewer
 
 First configure will spend 30–60s bootstrapping `premake5` and building rive-runtime. Subsequent builds are fast.
 
-The viewer's **Update checks** picker includes six samples for the current
+The viewer's **Update checks** picker includes seven samples for the current
 runtime update, with instructions for visual inspection. See the
 [sample guide](examples/viewer/samples/README.md) for coverage and automated checks.
 
@@ -129,6 +129,8 @@ Vulkan is opt-in everywhere (`RIVE_QT_WITH_VULKAN`, on by default) and auto-disa
 Rive is built with RTTI off (see `rive_build_config.lua` — "nonstandard for Rive"). Every plugin TU that subclasses or otherwise touches `rive::` types — the `src/rive/` wrappers, `RiveView`, and the render backends — matches that with a per-file `-fno-rtti` / `/GR-`. Without it the linker demands typeinfo symbols rive never emits. The flag is scoped per source file (see `set_source_files_properties` in `CMakeLists.txt`), so host projects that consume this plugin are unaffected.
 
 ## Known limitations / TODO
+
+- **GPU canvas**: implemented on Metal through Rive's deferred recorder and inline replay. The viewer includes a shader triangle check. Other graphics backends still use direct rendering and need this integration before they can run GPU canvas scripts.
 
 - **Idle repaints**: mitigated — the advance return value gates the repaint loop, so an artboard that reaches a settled/static state stops requesting frames instead of spinning the render loop.
 - **Hosted/referenced asset fetches still block**: the `.riv` *source* itself is now fetched off the render thread (`http(s)://` asynchronously on the GUI thread, `qrc`/`file` read inline before paint), so a remote source no longer stalls the UI. But *hosted/referenced assets* (images/fonts/audio not embedded in the `.riv`) are still resolved synchronously by the asset loader during import on the render thread — a `.riv` that pulls large CDN assets can still hitch on first load. Embed assets, or keep them small, until async asset loading lands.

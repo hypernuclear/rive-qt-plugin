@@ -54,6 +54,40 @@ bool scriptingAvailable()
     return false;
 #endif
 }
+#if defined(Q_OS_MACOS) && QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+QString triangleError(const QImage& image)
+{
+    if (image.isNull())
+        return "No frame captured";
+    // A background can render after a script failure. Require the three
+    // shader-produced corner colors and their expected orientation.
+    int counts[3] = {};
+    QPointF centers[3];
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            const int channels[] = {color.red(), color.green(), color.blue()};
+            for (int channel = 0; channel < 3; ++channel) {
+                if (channels[channel] > 100
+                    && channels[channel] > channels[(channel + 1) % 3] * 1.8
+                    && channels[channel] > channels[(channel + 2) % 3] * 1.8) {
+                    ++counts[channel];
+                    centers[channel] += QPointF(x, y);
+                }
+            }
+        }
+    }
+    for (int channel = 0; channel < 3; ++channel) {
+        if (counts[channel] <= image.width() * image.height() / 4000)
+            return QString("GPU triangle is missing color channel %1").arg(channel);
+        centers[channel] /= counts[channel];
+    }
+    if (centers[0].y() >= centers[1].y() || centers[0].y() >= centers[2].y()
+        || centers[1].x() >= centers[2].x())
+        return "GPU triangle is flipped or has swapped color channels";
+    return {};
+}
+#endif
 } // namespace
 
 class TstRuntimeUpgrade : public QObject
@@ -73,6 +107,8 @@ private slots:
     void importsAndAdvances()
     {
         QFETCH(QJsonObject, sample);
+        if (sample["requiresGpu"].toBool())
+            QSKIP("GPU canvas scripts are exercised by rendersSample on a real GPU");
         if (sample["requiresScripting"].toBool() && !scriptingAvailable())
             QSKIP("This fixture requires scripting and Rive tools");
         rive::NoOpFactory factory;
@@ -154,6 +190,16 @@ private slots:
     void rendersSample()
     {
         QFETCH(QJsonObject, sample);
+        renderSample(sample);
+        // Close the window/context and render again on a fresh device
+        // context. GPU assets must not survive through the file cache.
+        if (sample["checkTriangle"].toBool() && !QTest::currentTestFailed())
+            renderSample(sample);
+    }
+
+private:
+    void renderSample(const QJsonObject& sample)
+    {
         if (sample["requiresScripting"].toBool() && !scriptingAvailable())
             QSKIP("This fixture requires scripting and Rive tools");
         // Hidden QQuickWindow::grabWindow() can recreate the scene graph on
@@ -239,6 +285,37 @@ private slots:
         if (!snapshots.isEmpty()) {
             QVERIFY(QDir().mkpath(snapshots));
             QVERIFY(last.save(QDir(snapshots).filePath(sample["id"].toString() + ".png")));
+        }
+        if (sample["checkTriangle"].toBool()) {
+            QString error = triangleError(last);
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            view->setPlaying(false);
+            QTest::qWait(20);
+            error = triangleError(capture());
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+
+            const QUrl source = view->source();
+            for (const QSize& viewSize : {QSize(480, 360), QSize(600, 300), QSize(640, 480)}) {
+                view->setWidth(viewSize.width());
+                view->setHeight(viewSize.height());
+                QTest::qWait(20);
+                error = triangleError(capture());
+                QVERIFY2(error.isEmpty(), qPrintable(error));
+                // Release the old file, script VM and canvas, then import
+                // again against the same session. This catches stale IDs.
+                view->setSource({});
+                capture();
+                view->setPlaying(true);
+                view->setSource(source);
+                for (int frame = 0; frame < 60; ++frame) {
+                    QTest::qWait(16);
+                    error = triangleError(capture());
+                    if (error.isEmpty())
+                        break;
+                }
+                QVERIFY2(error.isEmpty(), qPrintable(error));
+                QVERIFY(failed.isEmpty());
+            }
         }
     }
 #endif
