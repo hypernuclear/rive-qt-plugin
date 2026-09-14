@@ -25,6 +25,7 @@
 //   AfterSwapStage via scheduleRenderJob.
 
 #include "rive_d3d11_backend.h"
+#include "rive_d3d11_frame_tracker.h"
 
 #include "../rive_render_backend_helpers.h"
 #include "../../rive/rive_qt_factory.h"
@@ -35,6 +36,7 @@
 #include <QRunnable>
 #include <QSGRendererInterface>
 #include <QSGTexture>
+#include <unordered_map>
 #include <rhi/qrhi.h>
 #include <rhi/qrhi_platform.h>
 
@@ -98,7 +100,8 @@ struct RiveD3D11Backend::Impl
     ComPtr<ID3D11Device> device;
     ComPtr<ID3D11DeviceContext> context;
 
-    std::unique_ptr<rive::gpu::RenderContext> renderContext;
+    std::shared_ptr<rive::gpu::RenderContext> renderContext;
+    std::shared_ptr<RiveD3D11FrameTracker> frameTracker;
     std::unique_ptr<RiveQtFactory> factory;
     rive::rcp<rive::gpu::RenderTargetD3D> renderTarget;
 
@@ -106,8 +109,6 @@ struct RiveD3D11Backend::Impl
     QRhiTexture* qrhiTexture = nullptr;
     QSGTexture* qsgTexture = nullptr;
     QSize textureSize;
-
-    uint64_t currentFrameNumber = 0;
 
     // sync=true for shutdown paths (~RiveD3D11Backend,
     // abandonGraphicsResources): delete inline. AfterSwapStage won't
@@ -145,6 +146,7 @@ RiveD3D11Backend::~RiveD3D11Backend()
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
+    m_impl->frameTracker.reset();
 
     m_impl->scheduleTextureCleanup(/*sync=*/true);
 }
@@ -202,8 +204,33 @@ bool RiveD3D11Backend::initialize(QQuickWindow* window, QString* errorOut)
 
     rive::gpu::D3DContextOptions opts;
     opts.isIntel = detectIntelGpu(m_impl->device.Get());
-    m_impl->renderContext = rive::gpu::RenderContextD3DImpl::MakeContext(
-        m_impl->device, m_impl->context, opts);
+    // Views rendered sequentially on the same QRhi share the expensive Rive
+    // pipelines. Weak ownership releases them with the last view; nothing is
+    // persisted across windows, threads, or application launches.
+    struct Entry {
+        std::weak_ptr<rive::gpu::RenderContext> context;
+        std::weak_ptr<RiveD3D11FrameTracker> frameTracker;
+    };
+    static thread_local std::unordered_map<QRhi*, Entry> contexts;
+    auto &entry = contexts[rhi];
+    m_impl->renderContext = entry.context.lock();
+    m_impl->frameTracker = entry.frameTracker.lock();
+    if (!m_impl->renderContext) {
+        m_impl->renderContext = rive::gpu::RenderContextD3DImpl::MakeContext(
+            m_impl->device, m_impl->context, opts);
+        if (m_impl->renderContext) {
+            m_impl->frameTracker = std::make_shared<RiveD3D11FrameTracker>();
+            const HRESULT hr = m_impl->frameTracker->initialize(m_impl->device.Get());
+            if (FAILED(hr)) {
+                m_impl->renderContext.reset();
+                m_impl->frameTracker.reset();
+                setError(QStringLiteral("RiveD3D11Backend: completion query creation failed (0x%1)")
+                         .arg(quint32(hr), 8, 16, QLatin1Char('0')));
+                return false;
+            }
+            entry = { m_impl->renderContext, m_impl->frameTracker };
+        }
+    }
     if (!m_impl->renderContext)
     {
         setError(QStringLiteral(
@@ -322,6 +349,12 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
         !m_impl->targetTexture)
         return;
 
+    const HRESULT completion = m_impl->frameTracker->poll(m_impl->context.Get());
+    if (FAILED(completion)) {
+        qCWarning(lcRiveD3D11Backend) << "GPU completion query failed:" << Qt::hex << completion;
+        return; // A failed/device-lost query is never evidence of completion.
+    }
+
     const uint32_t w = m_impl->renderTarget->width();
     const uint32_t h = m_impl->renderTarget->height();
 
@@ -345,15 +378,14 @@ void RiveD3D11Backend::renderFrame(rive::ArtboardInstance* artboard,
 
     m_impl->renderTarget->setTargetTexture(m_impl->targetTexture);
 
-    m_impl->currentFrameNumber += 1;
     rive::gpu::RenderContext::FlushResources flushRes;
     flushRes.renderTarget = m_impl->renderTarget.get();
     // externalCommandBuffer left null — D3D11 issues to the immediate
     // context, no per-frame command-buffer handoff.
-    flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-    flushRes.safeFrameNumber =
-        m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
+    flushRes.currentFrameNumber = m_impl->frameTracker->nextFrame();
+    flushRes.safeFrameNumber = m_impl->frameTracker->safeFrame();
     m_impl->renderContext->flush(flushRes);
+    m_impl->frameTracker->submitted(m_impl->context.Get());
 
     // Drop the ComPtr ref so the next ensureTexture can replace the
     // texture without RenderTargetD3D holding a stale reference.
@@ -370,6 +402,7 @@ void RiveD3D11Backend::abandonGraphicsResources()
     m_impl->factory.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
+    m_impl->frameTracker.reset();
     m_impl->context.Reset();
     m_impl->device.Reset();
     m_impl->rhi = nullptr;
