@@ -93,7 +93,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang llvm ninja-build libgl1-mesa-dev \
-            libvulkan-dev mesa-vulkan-drivers glslang-tools spirv-tools \
+            libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools spirv-tools \
             xvfb xauth libxkbcommon-x11-0 libxcb-cursor0
 
       - name: Configure
@@ -116,6 +116,7 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             export LIBGL_ALWAYS_SOFTWARE=1
+            export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
             export VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.x86_64.json
             xvfb-run -a ctest --test-dir build --build-config Release --output-on-failure
           elif [ "$RUNNER_OS" = "Windows" ]; then

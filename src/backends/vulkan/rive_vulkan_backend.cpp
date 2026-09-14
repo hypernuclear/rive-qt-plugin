@@ -466,9 +466,8 @@ QSGTexture* RiveVulkanBackend::ensureTexture(const QSize& pixelSize)
     }
     QRhiTexture::NativeTexture native;
     native.object = reinterpret_cast<quint64>(static_cast<VkImage>(*m_impl->targetImage));
-    // Tell Qt the image is in GENERAL layout — matches what we'll
-    // leave it in after our barriers below.
-    native.layout = static_cast<int>(VK_IMAGE_LAYOUT_GENERAL);
+    // Our final barrier leaves the image ready for Qt's texture sampling.
+    native.layout = static_cast<int>(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (!qrhiTex->createFrom(native))
     {
         qCWarning(lcRiveVulkanBackend) << "QRhiTexture::createFrom failed";
@@ -582,11 +581,10 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
     // visibility guarantee.
     VkImageMemoryBarrier presentBarrier{};
     presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                   VK_ACCESS_SHADER_WRITE_BIT;
+    presentBarrier.srcAccessMask = m_impl->targetLastAccess.accessMask;
     presentBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    presentBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    presentBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    presentBarrier.oldLayout = m_impl->targetLastAccess.layout;
+    presentBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     presentBarrier.image = static_cast<VkImage>(*m_impl->targetImage);
@@ -597,14 +595,16 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
     presentBarrier.subresourceRange.layerCount = 1;
     m_impl->devFns->vkCmdPipelineBarrier(
         cb,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        m_impl->targetLastAccess.pipelineStages,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0,
         0, nullptr,
         0, nullptr,
         1, &presentBarrier);
+    m_impl->targetLastAccess = {VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                VK_ACCESS_SHADER_READ_BIT,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    m_impl->qrhiTexture->setNativeLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     if (m_impl->devFns->vkEndCommandBuffer(cb) != VK_SUCCESS)
         return;

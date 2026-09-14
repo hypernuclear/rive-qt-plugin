@@ -20,6 +20,10 @@
 #     `--no-rive-decoders` skips Rive's bundled image codecs; RiveQtFactory decodes through QImage and uploads pixels
 #     through the GPU context instead.
 #
+# Windows/Linux use --raw_shaders: Mesa's GLSL preprocessor concatenates
+# tokens in minified declarations such as OUT(float2)name. Retaining upstream
+# whitespace avoids shader compilation failures; Metal is unaffected.
+#
 # Consumer usage:
 #   target_link_libraries(<target> PRIVATE rive)
 
@@ -63,6 +67,17 @@ if(WIN32)
         endif()
     endif()
     set(RIVE_WINDOWS_RUNTIME_FLAG "--windows_runtime=dynamic_${RIVE_CONFIG}")
+    # Upstream now writes the literal toolsversion "latest" into vcxproj,
+    # which MSBuild treats as a nonexistent VC/Tools/MSVC/latest directory.
+    # Use the toolchain that CMake resolved for this host.
+    set(_rive_msvc_path "${CMAKE_CXX_COMPILER};${CMAKE_LINKER}")
+    if(_rive_msvc_path MATCHES "/MSVC/([0-9.]+)/")
+        set(RIVE_WINDOWS_TOOLS_FLAG "--toolsversion=${CMAKE_MATCH_1}")
+    elseif(CMAKE_VS_PLATFORM_TOOLSET_VERSION)
+        set(RIVE_WINDOWS_TOOLS_FLAG "--toolsversion=${CMAKE_VS_PLATFORM_TOOLSET_VERSION}")
+    else()
+        message(FATAL_ERROR "Cannot resolve the MSVC tools version for Rive from CMake's compiler/linker paths")
+    endif()
 else()
     set(RIVE_CONFIG "release")
     set(RIVE_WINDOWS_RUNTIME_FLAG "")
@@ -219,7 +234,7 @@ if(WIN32)
 "# change (e.g. flipping the CRT flag, toggling decoders) should just\n"
 "# rebuild. Wipe if any expected flag is missing so build_rive.sh\n"
 "# reconfigures cleanly.\n"
-"$expectedFlags = @('${RIVE_WINDOWS_RUNTIME_FLAG}', '--cpp20', '--no-rive-decoders', '${RIVE_VULKAN_FLAG}', '${RIVE_SCRIPTING_FLAG}', '${RIVE_TOOLS_FLAG}', '${RIVE_AUDIO_FLAG}')\n"
+"$expectedFlags = @('${RIVE_WINDOWS_RUNTIME_FLAG}', '${RIVE_WINDOWS_TOOLS_FLAG}', '--raw_shaders', '--cpp20', '--no-rive-decoders', '${RIVE_VULKAN_FLAG}', '${RIVE_SCRIPTING_FLAG}', '${RIVE_TOOLS_FLAG}', '${RIVE_AUDIO_FLAG}')\n"
 "$argsFile = Join-Path $out '.rive_premake_args'\n"
 "if (Test-Path $argsFile) {\n"
 "    $existing = Get-Content -Raw -LiteralPath $argsFile\n"
@@ -482,7 +497,7 @@ if(WIN32)
 "# 0. Drive success off $LASTEXITCODE instead.\n"
 "$prevPref = $ErrorActionPreference\n"
 "$ErrorActionPreference = 'Continue'\n"
-"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--cpp20' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
+"& sh '${_rive_build_sh_native}' '${RIVE_CONFIG}' '${RIVE_WINDOWS_RUNTIME_FLAG}' '${RIVE_WINDOWS_TOOLS_FLAG}' '--raw_shaders' '--cpp20' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
 "$riveExit = $LASTEXITCODE\n"
 "$ErrorActionPreference = $prevPref\n"
 "\n"
@@ -493,7 +508,7 @@ if(WIN32)
 "    Write-Host '=== rive script failed. Re-running premake5 directly for diagnostics ==='\n"
 "    $pm = Join-Path $installDir 'premake5.exe'\n"
 "    if (Test-Path $pm) {\n"
-"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' '${RIVE_WINDOWS_RUNTIME_FLAG}' '--cpp20' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
+"        & $pm 'vs2022' \"--config=${RIVE_CONFIG}\" \"--out=out/${RIVE_CONFIG}\" '--with_rive_text' '--with_rive_layout' '${RIVE_WINDOWS_RUNTIME_FLAG}' '${RIVE_WINDOWS_TOOLS_FLAG}' '--raw_shaders' '--cpp20' '--no-rive-decoders' '${RIVE_VULKAN_FLAG}' '${RIVE_SCRIPTING_FLAG}' '${RIVE_TOOLS_FLAG}' '${RIVE_AUDIO_FLAG}' 2>&1\n"
 "        Write-Host \"=== premake5 standalone exit: $LASTEXITCODE ===\"\n"
 "    }\n"
 "}\n"
@@ -508,7 +523,7 @@ else()
     if(NOT APPLE)
         # Upstream uses Clang even when the Qt host uses GCC. LLVM bitcode
         # archives cannot be consumed by an ordinary GNU host linker.
-        set(_rive_extra_args "${_rive_extra_args} --no-lto")
+        set(_rive_extra_args "${_rive_extra_args} --no-lto --raw_shaders")
     endif()
     if(RIVE_VULKAN_FLAG)
         set(_rive_extra_args "${_rive_extra_args} ${RIVE_VULKAN_FLAG}")

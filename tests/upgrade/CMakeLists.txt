@@ -50,7 +50,7 @@ foreach(_index RANGE 0 ${_last})
             set_tests_properties(UpgradeSamples.render.${_backend}.${_id} PROPERTIES
                 ENVIRONMENT "RIVE_QT_TEST_BACKEND=${_backend}"
                 LABELS "runtime-upgrade;gpu;${_backend}" TIMEOUT 60
-                FAIL_REGULAR_EXPRESSION "requires the deferred recorder;rive deferred:.*([Dd][Rr][Oo][Pp]|TRIPWIRE);Validation Error;D3D12 ERROR;D3D11 ERROR")
+                FAIL_REGULAR_EXPRESSION "requires the deferred recorder;rive deferred:.*([Dd][Rr][Oo][Pp]|TRIPWIRE);Validation Error;VUID-;D3D12 ERROR;D3D11 ERROR")
         endforeach()
     endif()
 endforeach()

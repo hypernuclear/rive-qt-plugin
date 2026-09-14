@@ -37,6 +37,7 @@
 #include <QOpenGLContext>
 #include <QPointer>
 #include <QQuickWindow>
+#include <QQuickOpenGLUtils>
 #include <QRunnable>
 #include <QSGRendererInterface>
 #include <QSGTexture>
@@ -396,6 +397,9 @@ void RiveGLBackend::renderFrame(rive::ArtboardInstance* artboard, FitMode fit,
     // Yield GL state cleanly — unbind Rive's VAOs/programs/FBOs so
     // Qt's RHI doesn't see them when it takes the context back.
     impl->unbindGLInternalResources();
+    // Rive also changes write masks, tests and the active texture unit.
+    // Qt assumes their defaults when it starts the scene-graph pass.
+    QQuickOpenGLUtils::resetOpenGLState();
 }
 
 void RiveGLBackend::abandonGraphicsResources()
