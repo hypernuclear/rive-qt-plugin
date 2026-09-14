@@ -148,7 +148,11 @@ file(WRITE "${RIVE_PREMAKE_WRAPPER}"
 "RIVE_RUNTIME_DIR = '${RIVE_RUNTIME_DIR}'\n"
 "dofile(RIVE_RUNTIME_DIR .. '/build/rive_build_config.lua')\n"
 "dofile(RIVE_RUNTIME_DIR .. '/premake5_v2.lua')\n"
-"dofile(RIVE_RUNTIME_DIR .. '/renderer/premake5_pls_renderer.lua')\n")
+"dofile(RIVE_RUNTIME_DIR .. '/renderer/premake5_pls_renderer.lua')\n"
+"-- Keep readable GL source without disabling D3D shader optimization.\n"
+"filter('system:windows')\n"
+"undefines({ 'RIVE_RAW_SHADERS' })\n"
+"filter({})\n")
 
 # Static libs produced by the rive build that we consume.
 if(WIN32)

@@ -587,12 +587,15 @@ void RiveD3D12Backend::renderFrame(rive::ArtboardInstance* artboard,
                              cmd, false, flush,
                              [&] { flush(m_impl->renderTarget.get()); },
                              [&] {
-                                 // Vulkan's Ore and 2D renderer share a resource
-                                 // manager. Advance one sequence for both, after
-                                 // any canvas pre-passes have flushed.
+                                 // Ore shares the 2D resource manager, but its
+                                 // D3D12 beginFrame does not advance that manager.
+                                 // Protect resources released during Ore replay
+                                 // until this submission has completed.
                                  rive::ore::Context::FrameDescriptor desc{};
                                  desc.currentFrameNumber = ++m_impl->currentFrameNumber;
                                  desc.safeFrameNumber = m_impl->safeFrameNumber;
+                                 m_impl->d3d12Impl()->manager()->advanceFrameNumber(
+                                     desc.currentFrameNumber, desc.safeFrameNumber);
                                  return desc;
                              });
 
