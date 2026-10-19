@@ -156,12 +156,15 @@ private slots:
         t->fire();
         QVERIFY(mutatedSpy.count() >= 1);
 
-        // poll() observing the counter tick emits triggered() — this is the
-        // same path a rive-driven (SM) trigger takes. Driven directly here
-        // because the full advance() resets the trigger via advanced() before
-        // polling when no state machine is bound to consume it.
-        t->poll();
-        QVERIFY(triggeredSpy.count() >= 1);
+        // Use the host's real polling path: it must not consume a trigger
+        // before QML can observe it, or report the same fire again next frame.
+        vmi->advance();
+        QCOMPARE(triggeredSpy.count(), 1);
+        vmi->advance();
+        QCOMPARE(triggeredSpy.count(), 1);
+        t->fire();
+        vmi->advance();
+        QCOMPARE(triggeredSpy.count(), 2);
     }
 
     void numberRoundTrips()

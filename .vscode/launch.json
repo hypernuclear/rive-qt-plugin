@@ -6,7 +6,7 @@
   //
   // Before pressing F5:
   //   1. Pick a configure preset (Command Palette → "CMake: Select Configure
-  //      Preset") — e.g. "RelWithDebInfo + Qt" or "Default (Ninja) + Qt".
+  //      Preset") — choose the local Qt preset for your SDK and build type.
   //   2. Pick `rive_viewer` as the launch target (status bar at the bottom).
   // The cppdbg launch below is first, so a bare F5 runs the app (the QML
   // attach config is a helper for the C++/QML compound, not a standalone F5).

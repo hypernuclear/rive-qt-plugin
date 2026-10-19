@@ -1,7 +1,7 @@
 # Runtime update checks
 
 The viewer's **Update checks** picker loads six fixtures from Rive
-`runtime-v0.1.399` (`1cdd96e32f8a7366ed682e834a4d84def51498ed`) and the
+`runtime-v0.1.592` (`47d1cd54ccefd468db7cb26ecc4699ae1723dd85`) and the
 project's `gpu_canvas.riv` shader triangle. Selecting a
 check restores playback at 1×, Contain fit, the sample's artboard/view-model
 preset, auto-binding, and no layout-size override. Instructions appear above the

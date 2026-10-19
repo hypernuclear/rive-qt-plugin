@@ -15,19 +15,16 @@ public:
         m_size(size), m_commandBuffer(commandBuffer), m_flushCanvas(flush), m_renderer(context),
         m_oreFrame(oreFrame)
     {
-        m_disableRasterOrdering = disableRasterOrdering;
+        m_screenMode.disableRasterOrdering = disableRasterOrdering;
     }
 
     rive::Factory* factory() override { return m_factory; }
     rive::gpu::RenderContext* renderContext() override { return m_context; }
-    void* oreCommandBuffer() override { return m_commandBuffer; }
-    void beginOreFrame() override
+    rive::ore::Context::FrameDescriptor oreFrame() override
     {
-        if (auto* ore = oreContext()) {
-            auto desc = m_oreFrame ? m_oreFrame() : rive::ore::Context::FrameDescriptor{};
-            desc.externalCommandBuffer = m_commandBuffer;
-            ore->beginFrame(desc);
-        }
+        auto desc = m_oreFrame ? m_oreFrame() : rive::ore::Context::FrameDescriptor{};
+        desc.externalCommandBuffer = m_commandBuffer;
+        return desc;
     }
     rive::Renderer* beginScreen(uint64_t, bool clear, uint32_t color) override
     {
@@ -37,7 +34,7 @@ public:
         desc.loadAction = clear ? rive::gpu::LoadAction::clear
                                 : rive::gpu::LoadAction::preserveRenderTarget;
         desc.clearColor = color;
-        desc.disableRasterOrdering = m_disableRasterOrdering;
+        desc.disableRasterOrdering = m_screenMode.disableRasterOrdering;
         m_context->beginFrame(desc);
         return &m_renderer;
     }

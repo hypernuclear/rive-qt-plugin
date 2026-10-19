@@ -34,16 +34,21 @@ public:
     rive::Factory* renderContext() override;
     rive::ore::Context* ore() override;
     rive::cmd::DeferredCanvasHost* deferredCanvasHost() override;
+    bool supportsLayerMask() const override;
 
     // Forwarded to the recorder when supplied, otherwise the RenderContext.
     rive::rcp<rive::RenderBuffer> makeRenderBuffer(rive::RenderBufferType,
                                                    rive::RenderBufferFlags,
                                                    size_t sizeInBytes) override;
+    rive::rcp<rive::ImageMeshInstances> makeImageMeshInstances(size_t count) override;
     rive::rcp<rive::RenderShader> makeLinearGradient(float sx, float sy,
                                                      float ex, float ey,
                                                      const rive::ColorInt colors[],
                                                      const float stops[],
                                                      size_t count) override;
+    rive::rcp<rive::RenderShader> makeAngularGradient(const rive::ColorInt colors[],
+                                                      const float stops[],
+                                                      size_t count) override;
     rive::rcp<rive::RenderShader> makeRadialGradient(float cx, float cy,
                                                      float radius,
                                                      const rive::ColorInt colors[],

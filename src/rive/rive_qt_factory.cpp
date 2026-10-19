@@ -30,6 +30,17 @@ rive::rcp<rive::RenderShader> RiveQtFactory::makeLinearGradient(float sx, float 
     return m_resourceFactory->makeLinearGradient(sx, sy, ex, ey, colors, stops, count);
 }
 
+rive::rcp<rive::ImageMeshInstances> RiveQtFactory::makeImageMeshInstances(size_t count)
+{
+    return m_resourceFactory->makeImageMeshInstances(count);
+}
+
+rive::rcp<rive::RenderShader> RiveQtFactory::makeAngularGradient(const rive::ColorInt colors[],
+                                                               const float stops[], size_t count)
+{
+    return m_resourceFactory->makeAngularGradient(colors, stops, count);
+}
+
 rive::rcp<rive::RenderShader> RiveQtFactory::makeRadialGradient(float cx, float cy,
                                                                 float radius,
                                                                 const rive::ColorInt colors[],
@@ -118,4 +129,9 @@ rive::ore::Context* RiveQtFactory::ore()
 rive::cmd::DeferredCanvasHost* RiveQtFactory::deferredCanvasHost()
 {
     return m_resourceFactory->deferredCanvasHost();
+}
+
+bool RiveQtFactory::supportsLayerMask() const
+{
+    return m_resourceFactory->supportsLayerMask();
 }

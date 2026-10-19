@@ -286,12 +286,9 @@ void RiveViewModelInstance::advance()
 {
     if (!m_instance)
         return;
-    // Drain rive's internal data-bind delegates first — this picks up
-    // any side-effects from the state machine pushing values into the
-    // view model.
-    m_instance->advanced();
-    // Then poll our cached typed wrappers so QML bindings see the
-    // resulting changes.
+    // The runtime keeps trigger counters across frames; there is no longer
+    // an advanced() consume step. Poll after the state machine advances so
+    // QML sees both host edits and runtime-driven changes exactly once.
     for (auto it = m_propertyCache.begin(); it != m_propertyCache.end(); ++it)
     {
         if (RiveVMProperty* p = it.value().data())

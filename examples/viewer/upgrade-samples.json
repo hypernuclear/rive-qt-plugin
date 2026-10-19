@@ -1,5 +1,5 @@
 {
-    "runtime": "runtime-v0.1.399",
+    "runtime": "runtime-v0.1.592",
     "samples": [
         {
             "id": "gpu-canvas",

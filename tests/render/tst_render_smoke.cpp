@@ -20,6 +20,7 @@
 #include <QFileInfo>
 #include <QImage>
 #include <QQuickItem>
+#include <QQuickRenderControl>
 #include <QQuickWindow>
 #include <QSGRendererInterface>
 #include <QSignalSpy>
@@ -99,10 +100,8 @@ private slots:
     }
 
     // RiveView's half of the duration accessor. Only the no-source contract
-    // is checked here: a second QQuickWindow in this process can't get a Metal
-    // backend (see decodeImageUploadsTexture's skip), so a load-dependent
-    // assertion would skip forever rather than guard anything. The substantive
-    // lookup is covered headlessly in tst_rive_artboard.
+    // is checked here; the substantive lookup is covered headlessly in
+    // tst_rive_artboard.
     void animationDurationWithoutSourceIsZero()
     {
         RiveView rv;
@@ -114,17 +113,18 @@ private slots:
     {
         // Stand up the real Metal backend so we get a RiveQtFactory bound to a
         // live GPU device, then run a PNG through decodeImage -> makeImageTexture.
-        QQuickWindow window;
+        // grabWindow() can release the scene graph before it returns. Keep
+        // the RHI alive explicitly so this check reaches the upload path.
+        QQuickRenderControl control;
+        QQuickWindow window(&control);
         window.resize(64, 64);
-        window.create();
-        window.grabWindow(); // force scene-graph / RHI initialization
+        if (!control.initialize())
+            QSKIP("offscreen Metal context unavailable on this host");
 
         QString err;
         auto backend = RiveRenderBackend::create(&window, &err);
-        if (!backend)
-            QSKIP(qPrintable(QStringLiteral("no Metal backend: %1").arg(err)));
-        if (!backend->initialize(&window, &err))
-            QSKIP(qPrintable(QStringLiteral("backend init failed (no GPU?): %1").arg(err)));
+        QVERIFY2(backend != nullptr, qPrintable(err));
+        QVERIFY2(backend->initialize(&window, &err), qPrintable(err));
 
         rive::Factory* factory = backend->factory();
         QVERIFY(factory != nullptr);
@@ -163,10 +163,6 @@ private slots:
                                 .arg(nonUniform)));
     }
 
-    // RiveView's half of the duration accessor. Only the no-source contract
-    // is checked here: a second QQuickWindow in this process can't get a Metal
-    // backend (see decodeImageUploadsTexture's skip), so a load-dependent
-    // assertion would skip forever rather than guard anything. The substantive
     void matchesGoldenSnapshot()
     {
         // Opt-in golden: skipped unless a baseline has been committed (run with
