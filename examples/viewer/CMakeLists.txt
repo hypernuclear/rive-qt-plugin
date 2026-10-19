@@ -19,6 +19,7 @@ qt_add_qml_module(rive_viewer
     QML_FILES
         Main.qml
     RESOURCES
+        upgrade-samples.json
         ${RIVE_SAMPLE_FILES}
 )
 

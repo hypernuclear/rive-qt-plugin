@@ -88,6 +88,7 @@ add_subdirectory(artboard)
 add_subdirectory(state_machine)
 add_subdirectory(view_model)
 add_subdirectory(asset_loader)
+add_subdirectory(upgrade)
 
 if(WIN32)
     add_executable(tst_d3d11_frame_tracker render/tst_d3d11_frame_tracker.cpp)

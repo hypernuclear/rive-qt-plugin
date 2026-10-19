@@ -38,7 +38,7 @@
 #include "rive_vulkan_backend.h"
 
 #include "../rive_render_backend_helpers.h"
-#include "../../rive/rive_qt_factory.h"
+#include "../rive_deferred_renderer.h"
 
 #include <QLoggingCategory>
 #include <QPointer>
@@ -106,7 +106,7 @@ struct RiveVulkanBackend::Impl
     QVulkanDeviceFunctions* devFns = nullptr;
 
     std::unique_ptr<rive::gpu::RenderContext> renderContext;
-    std::unique_ptr<RiveQtFactory> factory;
+    std::unique_ptr<RiveDeferredRenderer> deferred;
     rive::rcp<rive::gpu::RenderTargetVulkanImpl> renderTarget;
 
     rive::rcp<rive::gpu::vkutil::Image> targetImage;
@@ -124,6 +124,8 @@ struct RiveVulkanBackend::Impl
     bool fenceArmed[kFramesInFlight] = {false, false};
     int frameSlot = 0;
     uint64_t currentFrameNumber = 0;
+    uint64_t safeFrameNumber = 0;
+    uint64_t resourceFrames[kFramesInFlight] = {};
 
     rive::gpu::RenderContextVulkanImpl* vkImpl() const
     {
@@ -198,12 +200,15 @@ struct RiveVulkanBackend::Impl
             }
             cmdBuffers[i] = VK_NULL_HANDLE; // freed with the pool below
             fenceArmed[i] = false;
+            resourceFrames[i] = 0;
         }
         if (cmdPool != VK_NULL_HANDLE)
         {
             devFns->vkDestroyCommandPool(device, cmdPool, nullptr);
             cmdPool = VK_NULL_HANDLE;
         }
+        currentFrameNumber = safeFrameNumber = 0;
+        frameSlot = 0;
     }
 
     // sync=true for shutdown paths (~RiveVulkanBackend,
@@ -260,7 +265,7 @@ RiveVulkanBackend::~RiveVulkanBackend()
         m_impl->devFns->vkDeviceWaitIdle(m_impl->device);
     }
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderTarget = nullptr;
     m_impl->renderContext.reset();
     m_impl->destroyCommandRing();
@@ -268,7 +273,7 @@ RiveVulkanBackend::~RiveVulkanBackend()
 
 bool RiveVulkanBackend::initialize(QQuickWindow* window, QString* errorOut)
 {
-    if (m_impl->window == window && m_impl->renderContext)
+    if (m_impl->window == window && m_impl->deferred)
         return true;
 
     auto setError = [&](const QString& msg) {
@@ -338,13 +343,20 @@ bool RiveVulkanBackend::initialize(QQuickWindow* window, QString* errorOut)
         return false;
     }
 
-    // Conservative VulkanFeatures — defaults to API 1.1, no
-    // optional-extension features enabled. Rive falls back to atomic
-    // mode without rasterizer-ordered access; correctness is preserved,
-    // performance can come from a follow-up that queries Qt's physDev
-    // for VK_EXT_fragment_shader_interlock /
-    // VK_EXT_rasterization_order_attachment_access support.
+    // Qt enables supported core features when it creates the VkDevice
+    // (qrhivulkan.cpp). Rive's atomic fallback needs fragment stores;
+    // leaving every feature false disables all its rendering modes.
+    // Hosts importing their own VkDevice must enable the same core features.
+    VkPhysicalDeviceFeatures supported{};
+    nh->inst->functions()->vkGetPhysicalDeviceFeatures(nh->physDev, &supported);
     rive::gpu::VulkanFeatures features;
+    features.independentBlend = supported.independentBlend;
+    features.fillModeNonSolid = supported.fillModeNonSolid;
+    features.fragmentStoresAndAtomics = supported.fragmentStoresAndAtomics;
+    features.shaderClipDistance = supported.shaderClipDistance;
+    features.textureCompressionBC = supported.textureCompressionBC;
+    features.textureCompressionASTC_LDR = supported.textureCompressionASTC_LDR;
+    features.textureCompressionETC2 = supported.textureCompressionETC2;
 
     rive::gpu::RenderContextVulkanImpl::ContextOptions opts;
     m_impl->renderContext = rive::gpu::RenderContextVulkanImpl::MakeContext(
@@ -364,8 +376,9 @@ bool RiveVulkanBackend::initialize(QQuickWindow* window, QString* errorOut)
     if (!m_impl->createCommandRing(errorOut))
         return false;
 
-    m_impl->factory =
-        std::make_unique<RiveQtFactory>(m_impl->renderContext.get());
+    m_impl->deferred = RiveDeferredRenderer::create(m_impl->renderContext.get(), errorOut);
+    if (!m_impl->deferred)
+        return false;
 
     qCInfo(lcRiveVulkanBackend) << "Initialized";
     return true;
@@ -373,12 +386,12 @@ bool RiveVulkanBackend::initialize(QQuickWindow* window, QString* errorOut)
 
 bool RiveVulkanBackend::isInitialized() const
 {
-    return m_impl->renderContext != nullptr;
+    return m_impl->deferred != nullptr;
 }
 
 rive::Factory* RiveVulkanBackend::factory() const
 {
-    return m_impl->factory.get();
+    return m_impl->deferred ? m_impl->deferred->factory() : nullptr;
 }
 
 QSGTexture* RiveVulkanBackend::ensureTexture(const QSize& pixelSize)
@@ -453,9 +466,8 @@ QSGTexture* RiveVulkanBackend::ensureTexture(const QSize& pixelSize)
     }
     QRhiTexture::NativeTexture native;
     native.object = reinterpret_cast<quint64>(static_cast<VkImage>(*m_impl->targetImage));
-    // Tell Qt the image is in GENERAL layout — matches what we'll
-    // leave it in after our barriers below.
-    native.layout = static_cast<int>(VK_IMAGE_LAYOUT_GENERAL);
+    // Our final barrier leaves the image ready for Qt's texture sampling.
+    native.layout = static_cast<int>(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     if (!qrhiTex->createFrom(native))
     {
         qCWarning(lcRiveVulkanBackend) << "QRhiTexture::createFrom failed";
@@ -499,13 +511,26 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
 
     // Wait for this slot's previous use to complete before recycling.
     const int slot = m_impl->frameSlot;
+    // Ore resets its shared descriptor pool in beginFrame. Its previous
+    // submission must have finished before replay may reset that pool.
+    const int previous = (slot + kFramesInFlight - 1) % kFramesInFlight;
+    if (m_impl->deferred->usesOre() && m_impl->fenceArmed[previous]) {
+        if (m_impl->devFns->vkWaitForFences(m_impl->device, 1,
+                &m_impl->frameFences[previous], VK_TRUE, UINT64_MAX) != VK_SUCCESS)
+            return;
+        m_impl->safeFrameNumber = qMax(m_impl->safeFrameNumber, m_impl->resourceFrames[previous]);
+    }
     VkFence fence = m_impl->frameFences[slot];
     VkCommandBuffer cb = m_impl->cmdBuffers[slot];
     if (m_impl->fenceArmed[slot])
     {
-        m_impl->devFns->vkWaitForFences(m_impl->device, 1, &fence, VK_TRUE,
-                                        UINT64_MAX);
-        m_impl->devFns->vkResetFences(m_impl->device, 1, &fence);
+        if (m_impl->devFns->vkWaitForFences(m_impl->device, 1, &fence, VK_TRUE,
+                                            UINT64_MAX) != VK_SUCCESS)
+            return;
+        m_impl->safeFrameNumber = qMax(m_impl->safeFrameNumber, m_impl->resourceFrames[slot]);
+        if (m_impl->devFns->vkResetFences(m_impl->device, 1, &fence) != VK_SUCCESS)
+            return;
+        m_impl->fenceArmed[slot] = false;
     }
     m_impl->devFns->vkResetCommandBuffer(cb, 0);
 
@@ -518,36 +543,30 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
     const uint32_t w = m_impl->renderTarget->width();
     const uint32_t h = m_impl->renderTarget->height();
 
-    rive::gpu::RenderContext::FrameDescriptor frameDesc;
-    frameDesc.renderTargetWidth = w;
-    frameDesc.renderTargetHeight = h;
-    frameDesc.loadAction = rive::gpu::LoadAction::clear;
-    frameDesc.clearColor = 0;
-    m_impl->renderContext->beginFrame(frameDesc);
-
-    rive::RiveRenderer renderer(m_impl->renderContext.get());
-    renderer.save();
-
-    const rive::AABB frame(0.0f, 0.0f, static_cast<float>(w),
-                           static_cast<float>(h));
-    renderer.align(rive_qt::toRiveFit(fit),
-                   rive_qt::toRiveAlignment(alignment),
-                   frame, artboard->bounds());
-    artboard->draw(&renderer);
-    renderer.restore();
-
     m_impl->renderTarget->setTargetImageView(m_impl->targetImageView->vkImageView(),
                                              static_cast<VkImage>(*m_impl->targetImage),
                                              m_impl->targetLastAccess);
 
-    m_impl->currentFrameNumber += 1;
-    rive::gpu::RenderContext::FlushResources flushRes;
-    flushRes.renderTarget = m_impl->renderTarget.get();
-    flushRes.externalCommandBuffer = cb;
-    flushRes.currentFrameNumber = m_impl->currentFrameNumber;
-    flushRes.safeFrameNumber =
-        m_impl->currentFrameNumber > 0 ? m_impl->currentFrameNumber - 1 : 0;
-    m_impl->renderContext->flush(flushRes);
+    const auto flush = [&](rive::gpu::RenderTarget* target) {
+        rive::gpu::RenderContext::FlushResources flushRes;
+        flushRes.renderTarget = target;
+        flushRes.externalCommandBuffer = cb;
+        flushRes.currentFrameNumber = ++m_impl->currentFrameNumber;
+        flushRes.safeFrameNumber = m_impl->safeFrameNumber;
+        m_impl->renderContext->flush(flushRes);
+    };
+    m_impl->deferred->render(artboard, QSize(w, h), fit, alignment,
+                             cb, false, flush,
+                             [&] { flush(m_impl->renderTarget.get()); },
+                             [&] {
+                                 // Vulkan's Ore and 2D renderer share a resource
+                                 // manager. Advance one sequence for both, after
+                                 // any canvas pre-passes have flushed.
+                                 rive::ore::Context::FrameDescriptor desc{};
+                                 desc.currentFrameNumber = ++m_impl->currentFrameNumber;
+                                 desc.safeFrameNumber = m_impl->safeFrameNumber;
+                                 return desc;
+                             });
 
     // Pull the new image-access state from the render target so the
     // next renderFrame's setTargetImageView starts from the right
@@ -562,11 +581,10 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
     // visibility guarantee.
     VkImageMemoryBarrier presentBarrier{};
     presentBarrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    presentBarrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
-                                   VK_ACCESS_SHADER_WRITE_BIT;
+    presentBarrier.srcAccessMask = m_impl->targetLastAccess.accessMask;
     presentBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    presentBarrier.oldLayout = VK_IMAGE_LAYOUT_GENERAL;
-    presentBarrier.newLayout = VK_IMAGE_LAYOUT_GENERAL;
+    presentBarrier.oldLayout = m_impl->targetLastAccess.layout;
+    presentBarrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
     presentBarrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     presentBarrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
     presentBarrier.image = static_cast<VkImage>(*m_impl->targetImage);
@@ -577,14 +595,16 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
     presentBarrier.subresourceRange.layerCount = 1;
     m_impl->devFns->vkCmdPipelineBarrier(
         cb,
-        VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
-            VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT |
-            VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+        m_impl->targetLastAccess.pipelineStages,
         VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
         0,
         0, nullptr,
         0, nullptr,
         1, &presentBarrier);
+    m_impl->targetLastAccess = {VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+                                VK_ACCESS_SHADER_READ_BIT,
+                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    m_impl->qrhiTexture->setNativeLayout(VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 
     if (m_impl->devFns->vkEndCommandBuffer(cb) != VK_SUCCESS)
         return;
@@ -597,6 +617,7 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
         == VK_SUCCESS)
     {
         m_impl->fenceArmed[slot] = true;
+        m_impl->resourceFrames[slot] = m_impl->currentFrameNumber;
     }
 
     m_impl->frameSlot = (slot + 1) % kFramesInFlight;
@@ -604,13 +625,15 @@ void RiveVulkanBackend::renderFrame(rive::ArtboardInstance* artboard,
 
 void RiveVulkanBackend::abandonGraphicsResources()
 {
+    if (m_impl->devFns && m_impl->device != VK_NULL_HANDLE)
+        m_impl->devFns->vkDeviceWaitIdle(m_impl->device);
     // sceneGraphInvalidated fires before QRhi is torn down, so we can
     // (and must) delete the QSGTexture/QRhiTexture inline. Skipping
     // the deletion would leak the QRhiTexture and trigger Qt's
     // "QRhi going down with N unreleased resources" warning during
     // QRhi destruction.
     m_impl->scheduleTextureCleanup(/*sync=*/true);
-    m_impl->factory.reset();
+    m_impl->deferred.reset();
     m_impl->renderContext.reset();
     m_impl->destroyCommandRing();
     m_impl->textureSize = QSize();

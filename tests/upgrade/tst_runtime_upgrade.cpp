@@ -1,0 +1,370 @@
+#include <QDir>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QQuickWindow>
+#include <QSGRendererInterface>
+#include <QSurfaceFormat>
+#if QT_CONFIG(vulkan)
+#include <QVulkanInstance>
+#include <QQuickGraphicsConfiguration>
+#endif
+#include <QSignalSpy>
+#include <QTest>
+#include <QTransform>
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+#include <QQuickRenderControl>
+#include <QQuickRenderTarget>
+#include <QScopeGuard>
+#include <rhi/qrhi.h>
+#endif
+
+#include "rive_artboard.h"
+#include "rive_file.h"
+#include "rive_state_machine.h"
+#include "rive_view.h"
+#include "test_helpers.h"
+
+#include <rive/text/text.hpp>
+#include <rive/text/text_value_run.hpp>
+#include <rive/viewmodel/viewmodel_instance_list.hpp>
+#include <rive/viewmodel/viewmodel_instance_string.hpp>
+#include <utils/no_op_factory.hpp>
+
+namespace {
+QString samplePath(const QString& name)
+{
+    return QDir(QStringLiteral(RIVE_QT_VIEWER_SAMPLES_DIR)).filePath(name);
+}
+
+void sampleRows()
+{
+    QTest::addColumn<QJsonObject>("sample");
+    QFile file(QStringLiteral(RIVE_QT_UPGRADE_CATALOG));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const auto samples = QJsonDocument::fromJson(file.readAll()).object()["samples"].toArray();
+    QVERIFY(!samples.isEmpty());
+    for (const auto& entry : samples) {
+        const auto sample = entry.toObject();
+        QTest::newRow(qPrintable(sample["id"].toString())) << sample;
+    }
+}
+
+bool scriptingAvailable()
+{
+#if defined(WITH_RIVE_SCRIPTING_LUAU) && defined(WITH_RIVE_TOOLS)
+    return true;
+#else
+    return false;
+#endif
+}
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+QString triangleError(const QImage& image)
+{
+    if (image.isNull())
+        return "No frame captured";
+    // A background can render after a script failure. Require the three
+    // shader-produced corner colors and their expected orientation.
+    int counts[3] = {};
+    QPointF centers[3];
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            const int channels[] = {color.red(), color.green(), color.blue()};
+            for (int channel = 0; channel < 3; ++channel) {
+                if (channels[channel] > 100
+                    && channels[channel] > channels[(channel + 1) % 3] * 1.8
+                    && channels[channel] > channels[(channel + 2) % 3] * 1.8) {
+                    ++counts[channel];
+                    centers[channel] += QPointF(x, y);
+                }
+            }
+        }
+    }
+    for (int channel = 0; channel < 3; ++channel) {
+        if (counts[channel] <= image.width() * image.height() / 4000)
+            return QString("GPU triangle is missing color channel %1").arg(channel);
+        centers[channel] /= counts[channel];
+    }
+    if (centers[0].y() >= centers[1].y() || centers[0].y() >= centers[2].y()
+        || centers[1].x() >= centers[2].x())
+        return "GPU triangle is flipped or has swapped color channels";
+    return {};
+}
+#endif
+} // namespace
+
+class TstRuntimeUpgrade : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void initTestCase()
+    {
+        const auto backend = qEnvironmentVariable("RIVE_QT_TEST_BACKEND");
+        if (backend.isEmpty())
+            return; // Import-only invocations do not need a graphics device.
+        const QMap<QString, QSGRendererInterface::GraphicsApi> apis{
+            {"metal", QSGRendererInterface::Metal},
+            {"d3d11", QSGRendererInterface::Direct3D11},
+            {"d3d12", QSGRendererInterface::Direct3D12},
+            {"opengl", QSGRendererInterface::OpenGL},
+            {"vulkan", QSGRendererInterface::Vulkan}};
+        QVERIFY2(apis.contains(backend), "Unknown RIVE_QT_TEST_BACKEND");
+        m_requestedApi = apis[backend];
+        QQuickWindow::setGraphicsApi(m_requestedApi);
+        if (backend == "opengl") {
+            QSurfaceFormat format;
+            format.setVersion(4, 3);
+            format.setProfile(QSurfaceFormat::CoreProfile);
+            format.setDepthBufferSize(24);
+            format.setStencilBufferSize(8);
+            QSurfaceFormat::setDefaultFormat(format);
+        }
+    }
+
+    void importsAndAdvances_data() { sampleRows(); }
+
+    void importsAndAdvances()
+    {
+        QFETCH(QJsonObject, sample);
+        if (sample["requiresGpu"].toBool())
+            QSKIP("GPU canvas scripts are exercised by rendersSample on a real GPU");
+        if (sample["requiresScripting"].toBool() && !scriptingAvailable())
+            QSKIP("This fixture requires scripting and Rive tools");
+        rive::NoOpFactory factory;
+        QString error;
+        auto file = RiveFile::fromUrl(QUrl::fromLocalFile(samplePath(sample["file"].toString())),
+                                      &factory, &error);
+        QVERIFY2(file != nullptr, qPrintable(error));
+        QVERIFY(!file->artboardNames().isEmpty());
+        // Exercise every artboard offered in the viewer, including all six
+        // grid/stack cases and the nested/global scripting artboards.
+        for (const QString& name : file->artboardNames()) {
+            auto artboard = file->createArtboard(name);
+            QVERIFY2(artboard != nullptr, qPrintable(name));
+            QVERIFY(artboard->width() > 0 && artboard->height() > 0);
+            std::unique_ptr<RiveStateMachine> sm(artboard->createStateMachine({}));
+            QVERIFY2(sm != nullptr, qPrintable(name));
+            auto vm = file->createViewModelInstance(artboard->raw(),
+                sample["viewModel"].toString(), sample["instance"].toString());
+            if (vm) {
+                artboard->bindViewModelInstance(vm);
+                sm->bindViewModelInstance(vm);
+            }
+            for (int frame = 0; frame < 120; ++frame)
+                sm->advance(1.0f / 60.0f);
+            if (sample["id"].toString() == "global-scripting" && name == "Parent") {
+                QVERIFY(vm);
+                auto* names = vm->propertyValue("globalNames");
+                QVERIFY(names && names->is<rive::ViewModelInstanceList>());
+                QStringList actualNames;
+                for (const auto& item : names->as<rive::ViewModelInstanceList>()->listItems()) {
+                    QVERIFY(item->viewModelInstance());
+                    auto* value = item->viewModelInstance()->propertyValue("label");
+                    QVERIFY(value && value->is<rive::ViewModelInstanceString>());
+                    actualNames.append(QString::fromStdString(
+                        value->as<rive::ViewModelInstanceString>()->propertyValue()));
+                }
+                // The embedded script enumerates the two globals and appends
+                // an intentionally named "Wrong" entry as a mutation check.
+                QCOMPARE(actualNames, QStringList({"Sizes", "Colors", "Wrong"}));
+            }
+        }
+    }
+
+    void fittedTextUsesFittedHeight()
+    {
+        rive::NoOpFactory factory;
+        QString error;
+        auto file = RiveFile::fromUrl(
+            QUrl::fromLocalFile(samplePath("upgrade-fitted-text.riv")), &factory, &error);
+        QVERIFY2(file != nullptr, qPrintable(error));
+        auto artboard = file->createArtboard({});
+        QVERIFY(artboard);
+        std::unique_ptr<RiveStateMachine> sm(artboard->createStateMachine({}));
+        QVERIFY(sm);
+        auto vm = file->createViewModelInstance(artboard->raw(), "MainVM", "Instance");
+        QVERIFY(vm);
+        sm->bindViewModelInstance(vm);
+        artboard->bindViewModelInstance(vm);
+        sm->advance(0);
+
+        // Upstream's 7.4 fixture fits its 175pt title down to 121pt. The hug
+        // slot must track the fitted height (~293), not the old ~423px box.
+        rive::Text* title = nullptr;
+        for (auto* text : artboard->raw()->find<rive::Text>()) {
+            if (!text->runs().empty() && !text->runs()[0]->text().empty()) {
+                title = text;
+                break;
+            }
+        }
+        QVERIFY(title);
+        QVERIFY(title->parent()->is<rive::LayoutComponent>());
+        const float height = title->parent()->as<rive::LayoutComponent>()->layoutHeight();
+        QVERIFY2(qAbs(height - 292.81f) < 0.5f, qPrintable(QString::number(height)));
+    }
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    void rendersSample_data() { sampleRows(); }
+
+    void rendersSample()
+    {
+        QFETCH(QJsonObject, sample);
+        renderSample(sample);
+        // Close the window/context and render again on a fresh device
+        // context. GPU assets must not survive through the file cache.
+        if (sample["checkTriangle"].toBool() && !QTest::currentTestFailed())
+            renderSample(sample);
+    }
+
+private:
+    void renderSample(const QJsonObject& sample)
+    {
+        if (sample["requiresScripting"].toBool() && !scriptingAvailable())
+            QSKIP("This fixture requires scripting and Rive tools");
+        // Hidden QQuickWindow::grabWindow() can recreate the scene graph on
+        // every capture, resetting the animation. RenderControl keeps one
+        // GPU context alive while we explicitly render and read back frames.
+#if QT_CONFIG(vulkan)
+        // RenderControl has no native window from which Qt can obtain an instance.
+        // It must outlive both the window and the render control.
+        QVulkanInstance instance;
+        if (QQuickWindow::graphicsApi() == QSGRendererInterface::Vulkan) {
+            instance.setExtensions(QQuickGraphicsConfiguration::preferredInstanceExtensions());
+            instance.setApiVersion(QVersionNumber(1, 3));
+            QVERIFY2(instance.create(), "Could not create the requested Vulkan instance");
+        }
+#endif
+        QQuickRenderControl control;
+        QQuickWindow window(&control);
+#if QT_CONFIG(vulkan)
+        if (instance.isValid())
+            window.setVulkanInstance(&instance);
+#endif
+        window.resize(640, 480);
+        window.setColor(QColor("#0a0a0a"));
+        auto* view = new RiveView(window.contentItem());
+        view->setWidth(640);
+        view->setHeight(480);
+        view->setFit(RiveView::Fit::Contain);
+        view->setViewModelName(sample["viewModel"].toString());
+        view->setViewModelInstanceName(sample["instance"].toString());
+        QSignalSpy failed(view, &RiveView::loadFailed);
+        view->setSource(QUrl::fromLocalFile(samplePath(sample["file"].toString())));
+        // A backend-specific test must fail if that backend cannot initialize;
+        // silently skipping would let unsupported GPU canvas paths pass CI.
+        QVERIFY2(control.initialize(), "Could not initialize the requested graphics backend");
+        if (m_requestedApi != QSGRendererInterface::Unknown)
+            QCOMPARE(window.rendererInterface()->graphicsApi(), m_requestedApi);
+        auto* rhi = control.rhi();
+        QVERIFY(rhi);
+        qInfo() << "Rendering with" << window.rendererInterface()->graphicsApi()
+                << rhi->driverInfo().deviceName;
+        const QSize size(640, 480);
+        std::unique_ptr<QRhiTexture> texture(rhi->newTexture(QRhiTexture::RGBA8, size, 1,
+            QRhiTexture::RenderTarget | QRhiTexture::UsedAsTransferSource));
+        QVERIFY(texture->create());
+        std::unique_ptr<QRhiRenderBuffer> depth(rhi->newRenderBuffer(
+            QRhiRenderBuffer::DepthStencil, size, 1));
+        QVERIFY(depth->create());
+        QRhiTextureRenderTargetDescription description{QRhiColorAttachment(texture.get())};
+        description.setDepthStencilBuffer(depth.get());
+        std::unique_ptr<QRhiTextureRenderTarget> target(rhi->newTextureRenderTarget(description));
+        std::unique_ptr<QRhiRenderPassDescriptor> pass(target->newCompatibleRenderPassDescriptor());
+        target->setRenderPassDescriptor(pass.get());
+        QVERIFY(target->create());
+        window.setRenderTarget(QQuickRenderTarget::fromRhiRenderTarget(target.get()));
+        const auto cleanup = qScopeGuard([&] {
+            window.setRenderTarget({});
+            control.invalidate();
+        });
+        const auto capture = [&]() {
+            control.polishItems();
+            control.beginFrame();
+            control.sync();
+            control.render();
+            QRhiReadbackResult result;
+            auto* batch = rhi->nextResourceUpdateBatch();
+            batch->readBackTexture(texture.get(), &result);
+            control.commandBuffer()->resourceUpdate(batch);
+            control.endFrame(); // Offscreen readbacks complete before returning.
+            if (result.data.isEmpty())
+                return QImage();
+            QImage image(reinterpret_cast<const uchar*>(result.data.constData()),
+                         size.width(), size.height(), QImage::Format_RGBA8888_Premultiplied);
+            return rhi->isYUpInFramebuffer()
+                ? image.transformed(QTransform::fromScale(1, -1)) : image.copy();
+        };
+
+        QImage first;
+        for (int frame = 0; frame < 150; ++frame) {
+            QTest::qWait(16);
+            first = capture();
+            QVERIFY2(failed.isEmpty(), failed.isEmpty() ? "" : qPrintable(failed[0][0].toString()));
+            if (!first.isNull() && riveqt_test::nonUniformFraction(first) > 0.02)
+                break;
+        }
+        QVERIFY(!first.isNull());
+        QVERIFY2(riveqt_test::nonUniformFraction(first) > 0.02,
+                 "Sample rendered a blank frame");
+
+        QImage last;
+        double maxDifference = 0;
+        for (int frame = 0; frame < 60; ++frame) {
+            QTest::qWait(16);
+            last = capture();
+            QVERIFY(!last.isNull());
+            maxDifference = qMax(maxDifference, riveqt_test::meanChannelDifference(first, last));
+        }
+        QVERIFY(failed.isEmpty());
+        if (sample["checkAnimation"].toBool())
+            QVERIFY2(maxDifference > 0.1, "Scripted clip froze instead of advancing");
+
+        const QString snapshots = qEnvironmentVariable("RIVE_QT_SAMPLE_SNAPSHOT_DIR");
+        if (!snapshots.isEmpty()) {
+            const auto directory = QDir(snapshots).filePath(
+                qEnvironmentVariable("RIVE_QT_TEST_BACKEND", "default"));
+            QVERIFY(QDir().mkpath(directory));
+            QVERIFY(last.save(QDir(directory).filePath(sample["id"].toString() + ".png")));
+        }
+        if (sample["checkTriangle"].toBool()) {
+            QString error = triangleError(last);
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+            view->setPlaying(false);
+            QTest::qWait(20);
+            error = triangleError(capture());
+            QVERIFY2(error.isEmpty(), qPrintable(error));
+
+            const QUrl source = view->source();
+            for (const QSize& viewSize : {QSize(480, 360), QSize(600, 300), QSize(640, 480)}) {
+                view->setWidth(viewSize.width());
+                view->setHeight(viewSize.height());
+                QTest::qWait(20);
+                error = triangleError(capture());
+                QVERIFY2(error.isEmpty(), qPrintable(error));
+                // Release the old file, script VM and canvas, then import
+                // again against the same session. This catches stale IDs.
+                view->setSource({});
+                capture();
+                view->setPlaying(true);
+                view->setSource(source);
+                for (int frame = 0; frame < 60; ++frame) {
+                    QTest::qWait(16);
+                    error = triangleError(capture());
+                    if (error.isEmpty())
+                        break;
+                }
+                QVERIFY2(error.isEmpty(), qPrintable(error));
+                QVERIFY(failed.isEmpty());
+            }
+        }
+    }
+#endif
+private:
+    QSGRendererInterface::GraphicsApi m_requestedApi = QSGRendererInterface::Unknown;
+};
+
+QTEST_MAIN(TstRuntimeUpgrade)
+#include "tst_runtime_upgrade.moc"

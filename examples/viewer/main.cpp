@@ -2,6 +2,10 @@
 // from the disk samples/ directory and lets the user switch between them.
 
 #include <QGuiApplication>
+#include <QFile>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -27,6 +31,15 @@ int main(int argc, char* argv[])
     // FolderListModel can consume it directly.
     const QUrl samplesDir = QUrl::fromLocalFile(QStringLiteral(RIVE_VIEWER_SAMPLES_DIR));
     engine.rootContext()->setContextProperty(QStringLiteral("viewerSamplesDir"), samplesDir);
+
+    QFile catalogFile(QStringLiteral(":/qt/qml/RiveViewer/upgrade-samples.json"));
+    if (!catalogFile.open(QIODevice::ReadOnly))
+        qFatal("Cannot open the bundled runtime sample catalog");
+    const auto catalog = QJsonDocument::fromJson(catalogFile.readAll()).object();
+    engine.rootContext()->setContextProperty(QStringLiteral("viewerUpgradeSamples"),
+                                             catalog.value("samples").toArray().toVariantList());
+    engine.rootContext()->setContextProperty(QStringLiteral("viewerRuntimeVersion"),
+                                             catalog.value("runtime").toString());
 
     engine.loadFromModule("RiveViewer", "Main");
 

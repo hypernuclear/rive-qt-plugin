@@ -1,6 +1,6 @@
 {
   // Manual build tasks. CMake Tools handles configure via the selected
-  // Qt kit (no Qt path hardcoded here) and auto-builds before launch
+  // preset (no Qt path hardcoded here) and auto-builds before launch
   // (cmake.buildBeforeRun). These tasks are for explicit F1 → Run Task
   // invocation when you want to build without launching.
   "version": "2.0.0",
@@ -9,7 +9,7 @@
       "label": "Build Viewer",
       "type": "shell",
       "command": "cmake",
-      "args": ["--build", "build", "--target", "rive_viewer"],
+      "args": ["--build", "${command:cmake.buildDirectory}", "--target", "rive_viewer"],
       "group": {
         "kind": "build",
         "isDefault": true
@@ -24,7 +24,7 @@
       "label": "Clean Build",
       "type": "shell",
       "command": "cmake",
-      "args": ["--build", "build", "--target", "clean"],
+      "args": ["--build", "${command:cmake.buildDirectory}", "--target", "clean"],
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",

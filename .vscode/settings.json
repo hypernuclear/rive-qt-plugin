@@ -1,6 +1,6 @@
 {
-  // CMake Tools handles Qt discovery via the Qt kit you select
-  // (qt-cpp extension injects qt.toolchain.cmake). No hardcoded Qt path here.
+  // CMakeUserPresets.json supplies the local Qt SDK path. CMake Tools uses
+  // the selected preset for configure, build and launch.
   "cmake.configureOnOpen": true,
   "cmake.buildBeforeRun": true,
 

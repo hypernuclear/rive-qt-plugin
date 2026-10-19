@@ -174,6 +174,8 @@ qt_add_qml_module(rive_qt
     SOURCES
         src/backends/rive_render_backend.cpp
         src/backends/rive_render_backend.h
+        src/backends/rive_deferred_renderer.cpp
+        src/backends/rive_deferred_renderer.h
         src/rive/rive_artboard.cpp
         src/rive/rive_artboard.h
         src/rive/rive_file.cpp
@@ -271,6 +273,7 @@ set_source_files_properties(
     src/rive/rive_view_model.cpp
     src/rive/rive_vm_property.cpp
     src/rive_view.cpp
+    src/backends/rive_deferred_renderer.cpp
     PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/GR-,-fno-rtti>"
 )
 
@@ -319,7 +322,9 @@ endif()
 # private headers in 6.10. Public in 6.6+ but the Metal native handles
 # struct stayed under the rhi/ subpath. Pick up Qt6::GuiPrivate so the
 # include search path is correct.
-find_package(Qt6 6.5 REQUIRED COMPONENTS GuiPrivate)
+if(NOT TARGET Qt6::GuiPrivate)
+    find_package(Qt6 6.5 REQUIRED COMPONENTS GuiPrivate)
+endif()
 
 target_include_directories(rive_qt
     PUBLIC

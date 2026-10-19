@@ -2,10 +2,11 @@ name: CI
 
 # Build the plugin + run the wrapper test suite. Doubles as the regression
 # gate for runtime bumps: the headless contract tests fail loudly at a named
-# wrapper↔runtime contract point if upstream drifts, and the macOS leg's
-# render smoke exercises the GPU image path that a compile alone won't catch.
+# wrapper↔runtime contract point if upstream drifts. Render checks exercise
+# Metal on macOS, D3D11/D3D12 through WARP, and OpenGL/Vulkan through Mesa.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
   pull_request:
@@ -35,13 +36,16 @@ jobs:
             qt-arch: clang_64
             qt-host: mac
             cmake-args: "-G Ninja -DCMAKE_OSX_ARCHITECTURES=x86_64"
-          # Windows proves the D3D11/D3D12 backends compile and the headless
-          # contract tests pass there (render smoke is APPLE-only and is
-          # simply not built off macOS).
+          # Windows builds all adapters and renders through D3D11/D3D12 WARP.
+          # Mesa on Linux exercises OpenGL and Vulkan with software drivers.
           - os: windows-2022
             qt-arch: win64_msvc2022_64
             qt-host: windows
             cmake-args: '-G "Visual Studio 17 2022" -A x64'
+          - os: ubuntu-24.04
+            qt-arch: linux_gcc_64
+            qt-host: linux
+            cmake-args: "-G Ninja"
 
     steps:
       - name: Checkout (with rive-runtime submodule)
@@ -83,6 +87,15 @@ jobs:
           fi
           brew install glslang spirv-tools
 
+      - name: Install Linux build and rendering prerequisites
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang llvm ninja-build libgl1-mesa-dev \
+            libvulkan-dev mesa-vulkan-drivers vulkan-validationlayers glslang-tools spirv-tools \
+            xvfb xauth libxkbcommon-x11-0 libxcb-cursor0
+
       - name: Configure
         shell: bash
         run: |
@@ -98,7 +111,34 @@ jobs:
 
       - name: Test
         shell: bash
-        run: ctest --test-dir build --build-config Release --output-on-failure
+        env:
+          RIVE_QT_SAMPLE_SNAPSHOT_DIR: ${{ github.workspace }}/build/sample-frames
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            export LIBGL_ALWAYS_SOFTWARE=1
+            export VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation
+            rive_lvp_icds=(/usr/share/vulkan/icd.d/lvp_icd*.json)
+            test -f "${rive_lvp_icds[0]}"
+            export VK_ICD_FILENAMES="${rive_lvp_icds[0]}"
+            xvfb-run -a ctest --test-dir build --build-config Release --output-on-failure
+          elif [ "$RUNNER_OS" = "Windows" ]; then
+            export QSG_RHI_PREFER_SOFTWARE_RENDERER=1
+            export QSG_RHI_DEBUG_LAYER=1
+            # The hosted Windows runner provides WARP; GL/Vulkan are covered on Linux.
+            ctest --test-dir build --build-config Release --output-on-failure \
+              -E '^UpgradeSamples.render.(opengl|vulkan)\.'
+          else
+            MTL_DEBUG_LAYER=1 ctest --test-dir build --build-config Release --output-on-failure
+          fi
+
+      - name: Upload rendered sample frames
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sample-frames-${{ matrix.os }}-${{ strategy.job-index }}
+          path: build/sample-frames/
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Upload test logs on failure
         if: failure()

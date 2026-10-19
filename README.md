@@ -10,7 +10,7 @@ Early spike. Functional enough to render most `.riv` files upstream ships as dem
 
 ## Requirements
 
-- Qt 6.5+ (6.10 tested)
+- Qt 6.5+ (6.12 tested)
 - CMake 3.21+
 - A C++20 compiler (Xcode clang / MSVC 2022 / recent GCC)
 - `make` (macOS/Linux) or `msbuild` (Windows) for rive's premake-driven build
@@ -18,19 +18,27 @@ Early spike. Functional enough to render most `.riv` files upstream ships as dem
 
 ## Build (standalone viewer)
 
-The repo ships a `CMakePresets.json` that pins the generator to Ninja (avoids the NMake+JOM trip-up on Windows kits). In Qt Creator / VS Code CMake Tools, just select a Qt kit and the preset is picked up automatically — Qt comes from the kit's toolchain file.
+The repo ships a `CMakePresets.json` that pins the generator to Ninja. In VS Code, open this repository folder and run **CMake: Select Configure Preset**. Use a local preset in the ignored `CMakeUserPresets.json` that inherits `default` and supplies your Qt installation through `CMAKE_PREFIX_PATH`.
+
+Run **CMake: Configure**, then **CMake: Set Launch/Debug Target** → `rive_viewer`. **CMake: Run Without Debugging** builds and launches it. **F5** uses the supplied C++/QML launch configuration; the **Build Viewer** task also follows the selected preset.
 
 From the CLI you also need to point CMake at your Qt install:
 
 ```sh
 git clone --recursive git@github.com:hypernuclear/rive-qt-plugin.git
 cd rive-qt-plugin
-cmake --preset default -DCMAKE_PREFIX_PATH=/path/to/Qt/6.10.2/macos
+cmake --preset default -DCMAKE_PREFIX_PATH=/path/to/Qt/6.12.0/macos
 cmake --build --preset viewer
 ./build/examples/viewer/rive_viewer
 ```
 
 First configure will spend 30–60s bootstrapping `premake5` and building rive-runtime. Subsequent builds are fast.
+
+On macOS, Xcode must include the Metal compiler. If the shader build reports a missing Metal Toolchain, install it with `xcodebuild -downloadComponent MetalToolchain` and rebuild.
+
+The viewer's **Update checks** picker includes seven samples for the current
+runtime update, with instructions for visual inspection. See the
+[sample guide](examples/viewer/samples/README.md) for coverage and automated checks.
 
 ## Use in your own Qt project
 
@@ -106,7 +114,7 @@ RiveView {
 | `RiveRenderBackend`        | Per-RHI backend interface; one impl per `src/backends/<api>/` (Metal, D3D11, D3D12, GL, Vulkan). Owns the graphics-device interop and paints the artboard into a `QSGTexture`. |
 | `RiveStateMachine` / `RiveViewModelInstance` | QObject wrappers exposing the state machine and data-bound view model to QML. |
 | `cmake/BuildRive.cmake`    | Invokes upstream's premake/gmake2/msbuild build and imports `librive.a`.   |
-| `third_party/rive-runtime` | Upstream submodule, pinned to `runtime-v0.1.5`.                            |
+| `third_party/rive-runtime` | Upstream submodule, pinned to `runtime-v0.1.592` (`47d1cd54ccef`).          |
 
 ### Why Rive's GPU renderer
 
@@ -118,6 +126,8 @@ Rather than reimplement Rive's path/feather/clip semantics on top of `QPainter`,
 | Windows         | D3D11, D3D12                                |
 | Linux / other   | OpenGL, Vulkan                              |
 
+Upstream also offers WebGPU (Dawn/wagyu), but [Qt 6.11's scene graph](https://doc.qt.io/qt-6/qtquick-visualcanvas-scenegraph-renderer.html) has no WebGPU backend. Supporting it here requires a separate device/texture interop path. Upstream's RHI adapter targets Unreal Engine.
+
 Vulkan is opt-in everywhere (`RIVE_QT_WITH_VULKAN`, on by default) and auto-disables when the host Qt was built without Vulkan support. See the options block at the top of `CMakeLists.txt` for the full backend/audio/scripting matrix.
 
 ### Quirk: `-fno-rtti`
@@ -125,6 +135,8 @@ Vulkan is opt-in everywhere (`RIVE_QT_WITH_VULKAN`, on by default) and auto-disa
 Rive is built with RTTI off (see `rive_build_config.lua` — "nonstandard for Rive"). Every plugin TU that subclasses or otherwise touches `rive::` types — the `src/rive/` wrappers, `RiveView`, and the render backends — matches that with a per-file `-fno-rtti` / `/GR-`. Without it the linker demands typeinfo symbols rive never emits. The flag is scoped per source file (see `set_source_files_properties` in `CMakeLists.txt`), so host projects that consume this plugin are unaffected.
 
 ## Known limitations / TODO
+
+- **GPU canvas**: all five backend adapters use Rive's deferred recorder and inline replay. The viewer includes a shader triangle check, with backend-specific render tests for colors, orientation, resize, reload, and window recreation. See [sample checks](examples/viewer/samples/README.md) for commands and validation limits.
 
 - **Idle repaints**: mitigated — the advance return value gates the repaint loop, so an artboard that reaches a settled/static state stops requesting frames instead of spinning the render loop.
 - **Hosted/referenced asset fetches still block**: the `.riv` *source* itself is now fetched off the render thread (`http(s)://` asynchronously on the GUI thread, `qrc`/`file` read inline before paint), so a remote source no longer stalls the UI. But *hosted/referenced assets* (images/fonts/audio not embedded in the `.riv`) are still resolved synchronously by the asset loader during import on the render thread — a `.riv` that pulls large CDN assets can still hitch on first load. Embed assets, or keep them small, until async asset loading lands.

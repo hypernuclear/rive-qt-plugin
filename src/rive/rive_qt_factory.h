@@ -2,8 +2,8 @@
 #define RIVE_QT_FACTORY_H
 
 // RiveQtFactory — thin rive::Factory wrapper that delegates everything
-// to a backing rive::gpu::RenderContext EXCEPT image decoding, which
-// goes through QImage.
+// to a backing rive::gpu::RenderContext or a deferred recording factory.
+// Image decoding goes through QImage and the real GPU context in both cases.
 //
 // Why: the rive_decoders library (libpng/libjpeg/libwebp built from
 // source) is disabled in this build to keep dependency surface small.
@@ -12,8 +12,8 @@
 // Qt already ships PNG/JPEG/WebP decoding via QImage's QImageReader
 // plugins, so we hijack that single virtual.
 //
-// This class does NOT own the RenderContext — it borrows the pointer
-// the backend already keeps alive. Don't outlive the backend.
+// Borrows the context and optional recorder from the backend. Both must
+// outlive this wrapper and every file imported through it.
 
 #include <rive/factory.hpp>
 
@@ -26,18 +26,29 @@ class RenderContext;
 class RiveQtFactory : public rive::Factory
 {
 public:
-    explicit RiveQtFactory(rive::gpu::RenderContext* context);
+    explicit RiveQtFactory(rive::gpu::RenderContext* context,
+                           rive::Factory* recordingFactory = nullptr);
     ~RiveQtFactory() override = default;
 
-    // Forwarded to the wrapped RenderContext.
+    // Imports route GPU scripts through the factory that decoded the file.
+    rive::Factory* renderContext() override;
+    rive::ore::Context* ore() override;
+    rive::cmd::DeferredCanvasHost* deferredCanvasHost() override;
+    bool supportsLayerMask() const override;
+
+    // Forwarded to the recorder when supplied, otherwise the RenderContext.
     rive::rcp<rive::RenderBuffer> makeRenderBuffer(rive::RenderBufferType,
                                                    rive::RenderBufferFlags,
                                                    size_t sizeInBytes) override;
+    rive::rcp<rive::ImageMeshInstances> makeImageMeshInstances(size_t count) override;
     rive::rcp<rive::RenderShader> makeLinearGradient(float sx, float sy,
                                                      float ex, float ey,
                                                      const rive::ColorInt colors[],
                                                      const float stops[],
                                                      size_t count) override;
+    rive::rcp<rive::RenderShader> makeAngularGradient(const rive::ColorInt colors[],
+                                                      const float stops[],
+                                                      size_t count) override;
     rive::rcp<rive::RenderShader> makeRadialGradient(float cx, float cy,
                                                      float radius,
                                                      const rive::ColorInt colors[],
@@ -53,6 +64,7 @@ public:
 
 private:
     rive::gpu::RenderContext* m_context;
+    rive::Factory* m_resourceFactory;
 };
 
 #endif // RIVE_QT_FACTORY_H
