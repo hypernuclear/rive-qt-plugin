@@ -6,7 +6,7 @@ Exposes `RiveView` as a QML element that loads a `.riv` file, advances its state
 
 ## Status
 
-Early spike. Functional enough to render most `.riv` files upstream ships as demos, but not yet production ready. See [Known limitations](#known-limitations--todo).
+In production: [hypershot](https://hypernuclear.com/hypershot) ships it on macOS (Metal) and Windows (D3D11/D3D12), and Rive lists it as the community runtime for Qt. State machines, data-bound view models, pointer and keyboard input, layout and text all work. The OpenGL and Vulkan backends pass the viewer's render tests but haven't shipped in a product yet, so reports from Linux are especially welcome. See [Known limitations](#known-limitations--todo) for what's left.
 
 ## Requirements
 
@@ -25,7 +25,7 @@ Run **CMake: Configure**, then **CMake: Set Launch/Debug Target** → `rive_view
 From the CLI you also need to point CMake at your Qt install:
 
 ```sh
-git clone --recursive git@github.com:hypernuclear/rive-qt-plugin.git
+git clone --recursive https://github.com/hypernuclear/rive-qt-plugin.git
 cd rive-qt-plugin
 cmake --preset default -DCMAKE_PREFIX_PATH=/path/to/Qt/6.12.0/macos
 cmake --build --preset viewer
@@ -45,7 +45,7 @@ runtime update, with instructions for visual inspection. See the
 Add as a submodule:
 
 ```sh
-git submodule add git@github.com:hypernuclear/rive-qt-plugin.git third_party/rive-qt-plugin
+git submodule add https://github.com/hypernuclear/rive-qt-plugin.git third_party/rive-qt-plugin
 git submodule update --init --recursive
 ```
 
@@ -144,7 +144,7 @@ Rive is built with RTTI off (see `rive_build_config.lua` — "nonstandard for Ri
 - **Text**: links against rive's bundled harfbuzz + sheenbidi; works for most cases. Complex shaping not extensively tested. A process-wide font fallback (`RiveView.setFallbackFontPath`) covers unresolved font assets.
 - **Distribution**: consumed today via `add_subdirectory` (source). There are no `install()`/export rules yet, so the module isn't packaged as a findable binary `find_package` component.
 
-### Implemented since the early spike
+### Already implemented
 
 State-machine driving, **data-bound view models** (`RiveViewModelInstance` + typed `RiveVM*Property` wrappers), **pointer/keyboard input forwarding** (on by default, `inputForwarding`), responsive **layout** (`Fit.Layout` + `layoutSize`), playback `speed`, and `alignment` are all wired. Note Rive deprecated legacy SM inputs (boolean/number/trigger) and runtime events in favor of data binding — drive interactivity through the bound view model's properties, not through SM inputs.
 
