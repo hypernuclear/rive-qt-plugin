@@ -6,6 +6,10 @@ A Qt/QML integration for [Rive](https://rive.app) runtime animations, GPU-render
 
 Exposes `RiveView` as a QML element that loads a `.riv` file, advances its state machine off the scene graph's frame clock, and renders the artboard with Rive's own GPU renderer into a `QSGTexture` that composites zero-copy into the Qt Quick scene. `RiveView` is a `QQuickItem`; the actual drawing happens in a per-RHI render backend (Metal, D3D11/D3D12, OpenGL, or Vulkan) picked to match the window's `QRhi`.
 
+## Demo
+
+https://github.com/user-attachments/assets/400c0312-b75d-4a61-8132-a31b3f13c547
+
 ## Status
 
 In production: [hypershot](https://hypernuclear.com/hypershot) ships it on macOS (Metal) and Windows (D3D11/D3D12), and Rive lists it as the community runtime for Qt. State machines, data-bound view models, pointer and keyboard input, layout and text all work. The OpenGL and Vulkan backends pass the viewer's render tests but haven't shipped in a product yet, so reports from Linux are especially welcome. See [Known limitations](#known-limitations--todo) for what's left.
