@@ -1,5 +1,7 @@
 # rive-qt-plugin
 
+![RiveView rendering Rive animations in Qt Quick](docs/demo.gif)
+
 A Qt/QML integration for [Rive](https://rive.app) runtime animations, GPU-rendered through Qt's scene graph.
 
 Exposes `RiveView` as a QML element that loads a `.riv` file, advances its state machine off the scene graph's frame clock, and renders the artboard with Rive's own GPU renderer into a `QSGTexture` that composites zero-copy into the Qt Quick scene. `RiveView` is a `QQuickItem`; the actual drawing happens in a per-RHI render backend (Metal, D3D11/D3D12, OpenGL, or Vulkan) picked to match the window's `QRhi`.
